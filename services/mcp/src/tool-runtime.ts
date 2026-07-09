@@ -1,5 +1,8 @@
 import {
   ClickArgsSchema,
+  commandErrorLifecycle,
+  createTraceContext,
+  McpToolErrorEnvelopeSchema,
   NavigateArgsSchema,
   SessionIdArgsSchema,
   TypeArgsSchema,
@@ -68,6 +71,29 @@ function stringifyMcpPayload(value: unknown): string {
   }
 }
 
+function mcpSuccessContent(value: unknown): {
+  content: Array<{ type: "text"; text: string }>;
+} {
+  return {
+    content: [{ type: "text", text: stringifyMcpPayload(value) }],
+  };
+}
+
+function mcpErrorContent(partial: z.input<typeof McpToolErrorEnvelopeSchema>): {
+  content: Array<{ type: "text"; text: string }>;
+  isError: true;
+} {
+  return {
+    isError: true,
+    content: [
+      {
+        type: "text",
+        text: stringifyMcpPayload(McpToolErrorEnvelopeSchema.parse(partial)),
+      },
+    ],
+  };
+}
+
 export async function executeMcpToolCall(
   name: string,
   rawArgs: unknown,
@@ -81,126 +107,73 @@ export async function executeMcpToolCall(
       case "create_session": {
         createSessionInputSchema.parse(rawArgs ?? {});
         const created = await client.createSession();
-        return {
-          content: [{ type: "text", text: stringifyMcpPayload(created) }],
-        };
+        return mcpSuccessContent(created);
       }
       case "navigate": {
         const args = NavigateArgsSchema.parse(rawArgs ?? {});
-        const { trace, result } = await client.postCommand({
+        const envelope = await client.postCommand({
           action: "navigate",
           ...args,
         });
-        return {
-          content: [
-            {
-              type: "text",
-              text: stringifyMcpPayload({ trace, result }),
-            },
-          ],
-        };
+        return mcpSuccessContent(envelope);
       }
       case "snapshot": {
         const args = SessionIdArgsSchema.parse(rawArgs ?? {});
-        const { trace, result } = await client.postCommand({
+        const envelope = await client.postCommand({
           action: "snapshot",
           ...args,
         });
-        return {
-          content: [
-            {
-              type: "text",
-              text: stringifyMcpPayload({ trace, result }),
-            },
-          ],
-        };
+        return mcpSuccessContent(envelope);
       }
       case "click": {
         const args = ClickArgsSchema.parse(rawArgs ?? {});
-        const { trace, result } = await client.postCommand({
+        const envelope = await client.postCommand({
           action: "click",
           ...args,
         });
-        return {
-          content: [
-            {
-              type: "text",
-              text: stringifyMcpPayload({ trace, result }),
-            },
-          ],
-        };
+        return mcpSuccessContent(envelope);
       }
       case "type": {
         const args = TypeArgsSchema.parse(rawArgs ?? {});
-        const { trace, result } = await client.postCommand({
+        const envelope = await client.postCommand({
           action: "type",
           ...args,
         });
-        return {
-          content: [
-            {
-              type: "text",
-              text: stringifyMcpPayload({ trace, result }),
-            },
-          ],
-        };
+        return mcpSuccessContent(envelope);
       }
       case "close_session": {
         const args = SessionIdArgsSchema.parse(rawArgs ?? {});
-        const { trace, result } = await client.postCommand({
+        const envelope = await client.postCommand({
           action: "closeSession",
           sessionId: args.sessionId,
         });
-        return {
-          content: [
-            {
-              type: "text",
-              text: stringifyMcpPayload({ trace, result }),
-            },
-          ],
-        };
+        return mcpSuccessContent(envelope);
       }
       default:
-        return {
-          isError: true,
-          content: [
-            {
-              type: "text",
-              text: `Unknown tool: ${name}`,
-            },
-          ],
-        };
+        return mcpErrorContent({ error: `Unknown tool: ${name}` });
     }
   } catch (error) {
     if (error instanceof CompanionHttpError) {
-      const payload: Record<string, unknown> = {
+      return mcpErrorContent({
         error: error.message,
-      };
-      if (error.code) {
-        payload.code = error.code;
-      }
-      if (error.trace) {
-        payload.trace = error.trace;
-      }
-      return {
-        isError: true,
-        content: [
-          {
-            type: "text",
-            text: JSON.stringify(payload, null, 2),
-          },
-        ],
-      };
+        code: error.code,
+        trace: error.trace,
+        lifecycle: error.lifecycle,
+      });
     }
-    return {
-      isError: true,
-      content: [
-        {
-          type: "text",
-          text: error instanceof Error ? error.message : "Unknown MCP error.",
-        },
-      ],
-    };
+    if (error instanceof z.ZodError) {
+      const trace = createTraceContext();
+      return mcpErrorContent({
+        error: "Invalid MCP tool arguments.",
+        code: "INVALID_TOOL_INPUT",
+        trace,
+        validation: error.flatten(),
+        lifecycle: commandErrorLifecycle(trace.traceId, "INVALID_TOOL_INPUT"),
+      });
+    }
+    return mcpErrorContent({
+      error: error instanceof Error ? error.message : "Unknown MCP error.",
+    });
   }
 }
 

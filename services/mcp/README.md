@@ -26,7 +26,9 @@ On startup, MCP calls **`GET /health`**; if the companion is unreachable, the pr
 
 Successful tool responses include **`trace`** and **`result`** JSON from the companion (`traceId` is also merged into command results).
 
-Errors return JSON text with **`error`**, optional **`code`** (`RuntimeErrorCode`), and optional **`trace`**.
+Errors return JSON (`McpToolErrorEnvelope`): **`error`** (human-readable message), optional **`code`** (`RuntimeErrorCode`), optional **`trace`**, **`validation`** detail for Zod issues, and optional **`lifecycle`** (`SessionLifecycleEvent`). No secrets belong in payloads.
+
+**Error code boundaries:** **`INVALID_TOOL_INPUT`** is emitted only when MCP validates tool arguments locally (before calling the companion). When the companion rejects a malformed `POST /commands` body, it returns **`INVALID_COMMAND_BODY`** upstream; MCP forwards that code (and companion trace/lifecycle) in the error envelope. MCP-local validation failures generate their own trace/lifecycle at the MCP boundary—they do not correlate with companion upstream traces.
 
 ## Capability matrix: MCP vs runtime vs ASAP
 
@@ -53,3 +55,14 @@ Optional: `WEBCHAIN_HEADLESS=false` is ignored by MCP (headless is controlled by
 
 - **Unit:** `pnpm --filter @webchain/mcp test`
 - **Integration (stdio + companion + Chromium):** `pnpm --filter @webchain/mcp test:integration` (also available as `pnpm test:mcp-conformance` from the repo root).
+
+### Test support exports (`./test-support/*`)
+
+Subpath exports are **for integration tests only** (MCP conformance, `examples/integrations` smokes). They spin up Chromium, companion, and the MCP stdio process — not for production or agent runtime use.
+
+| Export | Purpose |
+| --- | --- |
+| `@webchain/mcp/test-support/bootstrap-mcp-stack` | `bootstrapMcpStack()` — headless Chromium, companion on ephemeral port, MCP stdio client |
+| `@webchain/mcp/test-support/mcp-client-helpers` | `readToolText()`, `parseToolJson()` — parse MCP `tools/call` text content |
+
+`bootstrapMcpStack({ token?, clientName? })` returns `{ client, app, runtime, shutdown }`. Call `shutdown()` in `afterAll` to close stdio, browser, and companion.

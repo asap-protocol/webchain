@@ -1,58 +1,56 @@
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import type { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import {
-  getDefaultEnvironment,
-  StdioClientTransport,
-} from "@modelcontextprotocol/sdk/client/stdio.js";
-import { createCompanionApp } from "@webchain/companion/server";
-import { BrowserRuntime } from "@webchain/runtime";
-import type { FastifyInstance } from "fastify";
+  bootstrapMcpStack,
+  type McpIntegrationStack,
+} from "@webchain/mcp/test-support/bootstrap-mcp-stack";
+import { parseToolJson } from "@webchain/mcp/test-support/mcp-client-helpers";
+import {
+  CompanionCommandSuccessSchema,
+  McpToolErrorEnvelopeSchema,
+  SessionCreatedResponseSchema,
+  SessionLifecycleEventSchema,
+  SnapshotResultSchema,
+} from "@webchain/protocol";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-const token = "mcp-conformance-token";
-const mcpPackageRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
-
 describe("MCP stdio conformance (real companion + Chromium)", () => {
-  let app: FastifyInstance;
-  let runtime: BrowserRuntime;
-  let companionPort: number;
+  let stack: McpIntegrationStack;
   let client: Client;
-  let stdioTransport: StdioClientTransport;
 
   beforeAll(async () => {
-    runtime = new BrowserRuntime({ headless: true });
-    const { app: companion } = await createCompanionApp({
-      runtime,
-      localToken: token,
-      logger: false,
+    stack = await bootstrapMcpStack({
+      token: "mcp-conformance-token",
+      clientName: "webchain-mcp-conformance",
     });
-    app = companion;
-    await app.listen({ host: "127.0.0.1", port: 0 });
-    const addr = app.server.address();
-    companionPort =
-      typeof addr === "object" && addr && "port" in addr ? addr.port : 8787;
-
-    stdioTransport = new StdioClientTransport({
-      command: "pnpm",
-      args: ["exec", "tsx", "src/index.ts"],
-      cwd: mcpPackageRoot,
-      env: {
-        ...getDefaultEnvironment(),
-        WEBCHAIN_COMPANION_ORIGIN: `http://127.0.0.1:${companionPort}`,
-        WEBCHAIN_LOCAL_TOKEN: token,
-      },
-      stderr: "pipe",
-    });
-
-    client = new Client({ name: "webchain-mcp-conformance", version: "0.0.1" });
-    await client.connect(stdioTransport);
+    client = stack.client;
   });
 
   afterAll(async () => {
-    await stdioTransport.close();
-    await runtime.shutdown();
-    await app.close();
+    await stack.shutdown();
+  });
+
+  it("returns structured INVALID_TOOL_INPUT for bad navigate MCP args", async () => {
+    const created = await client.callTool({
+      name: "create_session",
+      arguments: {},
+    });
+    const session = SessionCreatedResponseSchema.parse(parseToolJson(created));
+
+    const failed = await client.callTool({
+      name: "navigate",
+      arguments: {
+        sessionId: session.sessionId,
+        url: "not-an-absolute-url",
+      },
+    });
+    expect(failed.isError).toBe(true);
+    const envelope = McpToolErrorEnvelopeSchema.parse(parseToolJson(failed));
+    expect(envelope.code).toBe("INVALID_TOOL_INPUT");
+
+    await client.callTool({
+      name: "close_session",
+      arguments: { sessionId: session.sessionId },
+    });
   });
 
   it("lists tools and runs create_session → navigate → snapshot → type → click → close_session", async () => {
@@ -72,14 +70,14 @@ describe("MCP stdio conformance (real companion + Chromium)", () => {
       arguments: {},
     });
     expect(created.isError).not.toBe(true);
-    const createdText =
-      created.content?.find((c) => c.type === "text")?.text ?? "{}";
-    const session = JSON.parse(createdText) as {
-      sessionId: string;
-      trace: { traceId: string };
-    };
+    const session = SessionCreatedResponseSchema.parse(parseToolJson(created));
     expect(session.sessionId.length).toBeGreaterThan(0);
     expect(session.trace.traceId.length).toBeGreaterThan(0);
+    const createdLifecycle = SessionLifecycleEventSchema.parse(
+      session.lifecycle,
+    );
+    expect(createdLifecycle.kind).toBe("session_created");
+    expect(createdLifecycle.sessionId).toBe(session.sessionId);
 
     const html =
       '<!DOCTYPE html><html><body><input id="t" type="text" /><p id="p">x</p></body></html>';
@@ -90,28 +88,25 @@ describe("MCP stdio conformance (real companion + Chromium)", () => {
       arguments: { sessionId: session.sessionId, url: dataUrl },
     });
     expect(nav.isError).not.toBe(true);
+    CompanionCommandSuccessSchema.parse(parseToolJson(nav));
 
     const snap = await client.callTool({
       name: "snapshot",
       arguments: { sessionId: session.sessionId },
     });
     expect(snap.isError).not.toBe(true);
-    const snapText = snap.content?.find((c) => c.type === "text")?.text ?? "";
-    const snapJson = JSON.parse(snapText) as {
-      result: {
-        htmlSnippet?: string;
-        accessibilityTree?: unknown;
-        domSummary?: string;
-        traceId?: string;
-      };
-    };
-    expect(snapJson.result.htmlSnippet?.length).toBeGreaterThan(0);
-    expect(snapJson.result.traceId?.length).toBeGreaterThan(0);
+    const snapEnvelope = CompanionCommandSuccessSchema.parse(
+      parseToolJson(snap),
+    );
+    const snapResult = SnapshotResultSchema.parse(snapEnvelope.result);
+    expect(snapResult.htmlSnippet.length).toBeGreaterThan(0);
+    expect(
+      snapResult.traceId?.length ?? snapEnvelope.trace.traceId.length,
+    ).toBeGreaterThan(0);
     // data: URLs may omit an accessibility tree in some Chromium builds; require html + correlation + layered hint.
     expect(
-      snapJson.result.accessibilityTree != null ||
-        (snapJson.result.domSummary != null &&
-          snapJson.result.domSummary.length > 0),
+      snapResult.accessibilityTree != null ||
+        (snapResult.domSummary != null && snapResult.domSummary.length > 0),
     ).toBe(true);
 
     const typed = await client.callTool({
@@ -123,17 +118,27 @@ describe("MCP stdio conformance (real companion + Chromium)", () => {
       },
     });
     expect(typed.isError).not.toBe(true);
+    CompanionCommandSuccessSchema.parse(parseToolJson(typed));
 
     const clicked = await client.callTool({
       name: "click",
       arguments: { sessionId: session.sessionId, selector: "#p" },
     });
     expect(clicked.isError).not.toBe(true);
+    CompanionCommandSuccessSchema.parse(parseToolJson(clicked));
 
     const closed = await client.callTool({
       name: "close_session",
       arguments: { sessionId: session.sessionId },
     });
     expect(closed.isError).not.toBe(true);
+    const closedEnvelope = CompanionCommandSuccessSchema.parse(
+      parseToolJson(closed),
+    );
+    const closedLifecycle = SessionLifecycleEventSchema.parse(
+      closedEnvelope.lifecycle,
+    );
+    expect(closedLifecycle.kind).toBe("session_closed");
+    expect(closedLifecycle.sessionId).toBe(session.sessionId);
   });
 });

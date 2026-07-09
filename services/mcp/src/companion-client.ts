@@ -2,7 +2,9 @@ import {
   CompanionApiErrorBodySchema,
   CompanionCommandSuccessSchema,
   type RuntimeCommand,
+  type RuntimeErrorCode,
   SessionCreatedResponseSchema,
+  type SessionLifecycleEvent,
   type TraceContext,
 } from "@webchain/protocol";
 
@@ -16,17 +18,24 @@ export type CompanionHttpClientOptions = {
 export class CompanionHttpError extends Error {
   readonly status: number;
   readonly trace?: TraceContext;
-  readonly code?: string;
+  readonly code?: RuntimeErrorCode;
+  readonly lifecycle?: SessionLifecycleEvent;
 
   constructor(
     message: string,
-    options: { status: number; trace?: TraceContext; code?: string },
+    options: {
+      status: number;
+      trace?: TraceContext;
+      code?: RuntimeErrorCode;
+      lifecycle?: SessionLifecycleEvent;
+    },
   ) {
     super(message);
     this.name = "CompanionHttpError";
     this.status = options.status;
     this.trace = options.trace;
     this.code = options.code;
+    this.lifecycle = options.lifecycle;
   }
 }
 
@@ -92,6 +101,7 @@ function parseCompanionFailure(
         status,
         trace: parsed.data.trace,
         code: parsed.data.code,
+        lifecycle: parsed.data.lifecycle,
       });
     }
   } catch {
