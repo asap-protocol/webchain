@@ -138,6 +138,10 @@ export const RuntimeErrorCodeSchema = z.enum([
   "BROWSER_LAUNCH_FAILED",
   "SESSION_NOT_FOUND",
   "COMMAND_FAILED",
+  /** Companion HTTP body validation on `/commands`. */
+  "INVALID_COMMAND_BODY",
+  /** MCP tool argument validation only. */
+  "INVALID_TOOL_INPUT",
 ]);
 
 export type RuntimeErrorCode = z.infer<typeof RuntimeErrorCodeSchema>;
@@ -163,9 +167,55 @@ export const TraceContextSchema = z.object({
 
 export type TraceContext = z.infer<typeof TraceContextSchema>;
 
+/** Structured lifecycle signal for operators (companion / MCP); optional in Phase 2. */
+export const SessionLifecycleEventSchema = z
+  .object({
+    kind: z.enum(["session_created", "session_closed", "command_error"]),
+    traceId: z.string().uuid(),
+    sessionId: z.string().optional(),
+    code: RuntimeErrorCodeSchema.optional(),
+  })
+  .strict();
+
+export type SessionLifecycleEvent = z.infer<typeof SessionLifecycleEventSchema>;
+
+export function commandErrorLifecycle(
+  traceId: string,
+  code?: RuntimeErrorCode,
+): SessionLifecycleEvent {
+  return SessionLifecycleEventSchema.parse({
+    kind: "command_error",
+    traceId,
+    ...(code !== undefined ? { code } : {}),
+  });
+}
+
+export function sessionCreatedLifecycle(
+  traceId: string,
+  sessionId: string,
+): SessionLifecycleEvent {
+  return SessionLifecycleEventSchema.parse({
+    kind: "session_created",
+    traceId,
+    sessionId,
+  });
+}
+
+export function sessionClosedLifecycle(
+  traceId: string,
+  sessionId: string,
+): SessionLifecycleEvent {
+  return SessionLifecycleEventSchema.parse({
+    kind: "session_closed",
+    traceId,
+    sessionId,
+  });
+}
+
 /** `POST /sessions` success body: session plus correlation trace (Phase 2). */
 export const SessionCreatedResponseSchema = SessionCreatedSchema.extend({
   trace: TraceContextSchema,
+  lifecycle: SessionLifecycleEventSchema.optional(),
 });
 
 export type SessionCreatedResponse = z.infer<
@@ -182,10 +232,24 @@ export const CompanionApiErrorBodySchema = z
     trace: TraceContextSchema,
     code: RuntimeErrorCodeSchema.optional(),
     details: z.unknown().optional(),
+    lifecycle: SessionLifecycleEventSchema.optional(),
   })
   .strict();
 
 export type CompanionApiErrorBody = z.infer<typeof CompanionApiErrorBodySchema>;
+
+/** MCP `tools/call` error envelope when `isError` is set. */
+export const McpToolErrorEnvelopeSchema = z
+  .object({
+    error: z.string(),
+    code: RuntimeErrorCodeSchema.optional(),
+    trace: TraceContextSchema.optional(),
+    validation: z.unknown().optional(),
+    lifecycle: SessionLifecycleEventSchema.optional(),
+  })
+  .strict();
+
+export type McpToolErrorEnvelope = z.infer<typeof McpToolErrorEnvelopeSchema>;
 
 export function createTraceContext(): TraceContext {
   return TraceContextSchema.parse({
@@ -199,23 +263,12 @@ export function isMutationCommand(command: RuntimeCommand) {
   return command.action === "click" || command.action === "type";
 }
 
-/** Structured lifecycle signal for operators (companion / MCP); optional in Phase 2. */
-export const SessionLifecycleEventSchema = z
-  .object({
-    kind: z.enum(["session_created", "session_closed", "command_error"]),
-    traceId: z.string().uuid(),
-    sessionId: z.string().optional(),
-    code: RuntimeErrorCodeSchema.optional(),
-  })
-  .strict();
-
-export type SessionLifecycleEvent = z.infer<typeof SessionLifecycleEventSchema>;
-
 /** Successful `POST /commands` body shape from companion. */
 export const CompanionCommandSuccessSchema = z
   .object({
     trace: TraceContextSchema,
     result: z.unknown(),
+    lifecycle: SessionLifecycleEventSchema.optional(),
   })
   .strict();
 

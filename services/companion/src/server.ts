@@ -1,13 +1,17 @@
 import cors from "@fastify/cors";
 import {
   CompanionApiErrorBodySchema,
+  CompanionCommandSuccessSchema,
   CompanionHealthSchema,
+  commandErrorLifecycle,
   createTraceContext,
   RUNTIME_ACTIONS,
   RuntimeCommandSchema,
   type RuntimeErrorCode,
   SessionCreatedResponseSchema,
   SessionCreatedSchema,
+  sessionClosedLifecycle,
+  sessionCreatedLifecycle,
   type TraceContext,
 } from "@webchain/protocol";
 import { type BrowserRuntime, isWebchainRuntimeError } from "@webchain/runtime";
@@ -23,6 +27,16 @@ function httpStatusForRuntimeCode(code: RuntimeErrorCode): number {
       return 503;
     case "COMMAND_FAILED":
       return 502;
+    case "INVALID_COMMAND_BODY":
+      return 400;
+    case "INVALID_TOOL_INPUT":
+      throw new Error(
+        "INVALID_TOOL_INPUT is MCP-only and must not be mapped at companion HTTP boundary.",
+      );
+    default: {
+      const _exhaustive: never = code;
+      return _exhaustive;
+    }
   }
 }
 
@@ -35,7 +49,9 @@ function sendRuntimeFailure(
     const body = CompanionApiErrorBodySchema.parse({
       error: "Invalid request body.",
       trace,
+      code: "INVALID_COMMAND_BODY",
       details: error.flatten(),
+      lifecycle: commandErrorLifecycle(trace.traceId, "INVALID_COMMAND_BODY"),
     });
     return reply.code(400).send(body);
   }
@@ -46,6 +62,7 @@ function sendRuntimeFailure(
       error: error.message,
       trace,
       code: error.code,
+      lifecycle: commandErrorLifecycle(trace.traceId, error.code),
     });
     return reply.code(status).send(body);
   }
@@ -53,6 +70,7 @@ function sendRuntimeFailure(
   const body = CompanionApiErrorBodySchema.parse({
     error: error instanceof Error ? error.message : "Unknown runtime error.",
     trace,
+    lifecycle: commandErrorLifecycle(trace.traceId),
   });
   return reply.code(500).send(body);
 }
@@ -115,9 +133,14 @@ export async function createCompanionApp(
     const trace = createTraceContext();
     try {
       const session = await options.runtime.createSession();
+      const parsedSession = SessionCreatedSchema.parse(session);
       return SessionCreatedResponseSchema.parse({
-        ...SessionCreatedSchema.parse(session),
+        ...parsedSession,
         trace,
+        lifecycle: sessionCreatedLifecycle(
+          trace.traceId,
+          parsedSession.sessionId,
+        ),
       });
     } catch (error) {
       return sendRuntimeFailure(reply, error, trace);
@@ -133,38 +156,39 @@ export async function createCompanionApp(
       switch (command.action) {
         case "navigate": {
           const result = await runtime.navigate(command);
-          return {
+          return CompanionCommandSuccessSchema.parse({
             trace,
             result: { ...result, traceId: trace.traceId },
-          };
+          });
         }
         case "snapshot": {
           const result = await runtime.snapshot(command);
-          return {
+          return CompanionCommandSuccessSchema.parse({
             trace,
             result: { ...result, traceId: trace.traceId },
-          };
+          });
         }
         case "click": {
           const result = await runtime.click(command);
-          return {
+          return CompanionCommandSuccessSchema.parse({
             trace,
             result: { ...result, traceId: trace.traceId },
-          };
+          });
         }
         case "type": {
           const result = await runtime.type(command);
-          return {
+          return CompanionCommandSuccessSchema.parse({
             trace,
             result: { ...result, traceId: trace.traceId },
-          };
+          });
         }
         case "closeSession": {
           const result = await runtime.closeSession(command);
-          return {
+          return CompanionCommandSuccessSchema.parse({
             trace,
             result: { ...result, traceId: trace.traceId },
-          };
+            lifecycle: sessionClosedLifecycle(trace.traceId, command.sessionId),
+          });
         }
       }
     } catch (error) {

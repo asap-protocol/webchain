@@ -9,6 +9,7 @@ function parseApiError(res: { body: string }) {
     trace: { traceId: string; runId: string; createdAt: string };
     code?: string;
     details?: unknown;
+    lifecycle?: { kind: string };
   };
 }
 
@@ -98,6 +99,10 @@ describe("createCompanionApp", () => {
 
     expect(res.statusCode).toBe(200);
     expect(runtime.createSession).toHaveBeenCalledOnce();
+    const body = JSON.parse(res.body) as {
+      lifecycle?: { kind: string; sessionId?: string };
+    };
+    expect(body.lifecycle?.kind).toBe("session_created");
     await app.close();
   });
 
@@ -197,6 +202,11 @@ describe("createCompanionApp", () => {
     expect(closeRes.statusCode).toBe(200);
     expect(runtime.closeSession).toHaveBeenCalled();
 
+    const closeBody = JSON.parse(closeRes.body) as {
+      lifecycle?: { kind: string };
+    };
+    expect(closeBody.lifecycle?.kind).toBe("session_closed");
+
     await app.close();
   });
 
@@ -234,6 +244,8 @@ describe("createCompanionApp", () => {
     const body = parseApiError(res);
     expect(body.trace.traceId).toBeTruthy();
     expect(body.details).toBeDefined();
+    expect(body.code).toBe("INVALID_COMMAND_BODY");
+    expect(body.lifecycle?.kind).toBe("command_error");
     await app.close();
   });
 
@@ -265,6 +277,7 @@ describe("createCompanionApp", () => {
     expect(body.error).toContain("boom");
     expect(body.trace.traceId).toBeTruthy();
     expect(body.code).toBeUndefined();
+    expect(body.lifecycle?.kind).toBe("command_error");
     await app.close();
   });
 
@@ -298,6 +311,7 @@ describe("createCompanionApp", () => {
     const body = parseApiError(res);
     expect(body.code).toBe("SESSION_NOT_FOUND");
     expect(body.trace.traceId).toBeTruthy();
+    expect(body.lifecycle?.kind).toBe("command_error");
     await app.close();
   });
 
@@ -328,6 +342,37 @@ describe("createCompanionApp", () => {
     const body = parseApiError(res);
     expect(body.code).toBe("COMMAND_FAILED");
     expect(body.trace.traceId).toBeTruthy();
+    expect(body.lifecycle?.kind).toBe("command_error");
+    await app.close();
+  });
+
+  it("returns 500 when runtime incorrectly emits MCP-only INVALID_TOOL_INPUT", async () => {
+    const runtime = mockRuntime({
+      navigate: vi.fn(async () => {
+        throw new WebchainRuntimeError(
+          "INVALID_TOOL_INPUT",
+          "must not reach companion HTTP",
+        );
+      }),
+    });
+    const { app } = await createCompanionApp({
+      runtime,
+      logger: false,
+      localToken: "tok",
+    });
+
+    const res = await app.inject({
+      method: "POST",
+      url: "/commands",
+      headers: { "x-webchain-token": "tok" },
+      payload: {
+        action: "navigate",
+        sessionId: "s1",
+        url: "https://example.com",
+      },
+    });
+
+    expect(res.statusCode).toBe(500);
     await app.close();
   });
 
@@ -356,6 +401,7 @@ describe("createCompanionApp", () => {
     const body = parseApiError(res);
     expect(body.code).toBe("BROWSER_NOT_INSTALLED");
     expect(body.trace.traceId).toBeTruthy();
+    expect(body.lifecycle?.kind).toBe("command_error");
     await app.close();
   });
 });
