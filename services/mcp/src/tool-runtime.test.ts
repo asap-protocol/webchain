@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { z } from "zod";
 import type { CompanionHttpClient } from "./companion-client.js";
 import { CompanionHttpError } from "./companion-client.js";
 import { executeMcpToolCall, getMcpToolDefinitions } from "./tool-runtime.js";
@@ -90,7 +91,8 @@ describe("executeMcpToolCall", () => {
   it("rejects unknown tools", async () => {
     const out = await executeMcpToolCall("nope", {}, mockClient());
     expect(out.isError).toBe(true);
-    expect(out.content[0]?.text).toContain("Unknown tool");
+    const body = JSON.parse(out.content[0]?.text ?? "{}") as { error: string };
+    expect(body.error).toContain("Unknown tool");
   });
 
   it("creates a session", async () => {
@@ -109,6 +111,8 @@ describe("executeMcpToolCall", () => {
       mockClient(),
     );
     expect(out.isError).toBe(true);
+    const body = JSON.parse(out.content[0]?.text ?? "{}") as { code?: string };
+    expect(body.code).toBe("INVALID_TOOL_INPUT");
   });
 
   it("navigates with valid args", async () => {
@@ -122,20 +126,105 @@ describe("executeMcpToolCall", () => {
       client,
     );
     expect(out.isError).toBeUndefined();
-    expect(client.postCommand).toHaveBeenCalled();
+    expect(client.postCommand).toHaveBeenCalledWith({
+      action: "navigate",
+      sessionId: "s1",
+      url: "https://example.com",
+    });
   });
 
-  it("returns zod error text for bad navigate args", async () => {
+  it("returns zod error envelope for bad navigate args", async () => {
     const out = await executeMcpToolCall(
       "navigate",
       { sessionId: "", url: "not-a-url" },
       mockClient(),
     );
     expect(out.isError).toBe(true);
+    const body = JSON.parse(out.content[0]?.text ?? "{}") as {
+      code?: string;
+      lifecycle?: { code?: string };
+    };
+    expect(body.code).toBe("INVALID_TOOL_INPUT");
+    expect(body.lifecycle?.code).toBe("INVALID_TOOL_INPUT");
+  });
+
+  it("does not label companion response ZodError as INVALID_TOOL_INPUT", async () => {
+    const client = {
+      checkHealth: vi.fn(),
+      createSession: vi.fn(async () => {
+        throw new CompanionHttpError(
+          "Companion response failed schema validation: Required",
+          { status: 200 },
+        );
+      }),
+      postCommand: vi.fn(),
+    } as unknown as CompanionHttpClient;
+
+    const out = await executeMcpToolCall("create_session", {}, client);
+    expect(out.isError).toBe(true);
+    const body = JSON.parse(out.content[0]?.text ?? "{}") as {
+      error: string;
+      code?: string;
+    };
+    expect(body.code).not.toBe("INVALID_TOOL_INPUT");
+    expect(body.error).toContain("schema validation");
+  });
+
+  it("does not label companion postCommand ZodError as INVALID_TOOL_INPUT", async () => {
+    const client = {
+      checkHealth: vi.fn(),
+      createSession: vi.fn(),
+      postCommand: vi.fn(async () => {
+        throw new CompanionHttpError(
+          "Companion response failed schema validation: Invalid companion success body",
+          { status: 200 },
+        );
+      }),
+    } as unknown as CompanionHttpClient;
+
+    const out = await executeMcpToolCall(
+      "navigate",
+      { sessionId: "s1", url: "https://example.com" },
+      client,
+    );
+    expect(out.isError).toBe(true);
+    const body = JSON.parse(out.content[0]?.text ?? "{}") as {
+      error: string;
+      code?: string;
+    };
+    expect(body.code).not.toBe("INVALID_TOOL_INPUT");
+    expect(body.error).toContain("schema validation");
+  });
+
+  it("treats unexpected ZodError from companion client as generic MCP error", async () => {
+    const client = {
+      checkHealth: vi.fn(),
+      createSession: vi.fn(async () => {
+        throw new z.ZodError([
+          {
+            code: "custom",
+            path: ["sessionId"],
+            message: "Required",
+          },
+        ]);
+      }),
+      postCommand: vi.fn(),
+    } as unknown as CompanionHttpClient;
+
+    const out = await executeMcpToolCall("create_session", {}, client);
+    expect(out.isError).toBe(true);
+    const body = JSON.parse(out.content[0]?.text ?? "{}") as {
+      error: string;
+      code?: string;
+    };
+    expect(body.code).not.toBe("INVALID_TOOL_INPUT");
+    expect(body.error).toContain("Unexpected schema error");
   });
 
   it("snapshots, clicks, types, and closes sessions", async () => {
     const client = mockClient();
+    vi.clearAllMocks();
+
     const snap = await executeMcpToolCall(
       "snapshot",
       { sessionId: "s1" },
@@ -145,14 +234,14 @@ describe("executeMcpToolCall", () => {
 
     const click = await executeMcpToolCall(
       "click",
-      { sessionId: "s1", selector: "a" },
+      { sessionId: "s1", selector: "#btn" },
       client,
     );
     expect(click.isError).toBeUndefined();
 
     const type = await executeMcpToolCall(
       "type",
-      { sessionId: "s1", selector: "a", text: "x" },
+      { sessionId: "s1", selector: "#q", text: "hello" },
       client,
     );
     expect(type.isError).toBeUndefined();
@@ -163,6 +252,48 @@ describe("executeMcpToolCall", () => {
       client,
     );
     expect(closed.isError).toBeUndefined();
+
+    expect(client.postCommand).toHaveBeenNthCalledWith(1, {
+      action: "snapshot",
+      sessionId: "s1",
+    });
+    expect(client.postCommand).toHaveBeenNthCalledWith(2, {
+      action: "click",
+      sessionId: "s1",
+      selector: "#btn",
+    });
+    expect(client.postCommand).toHaveBeenNthCalledWith(3, {
+      action: "type",
+      sessionId: "s1",
+      selector: "#q",
+      text: "hello",
+    });
+    expect(client.postCommand).toHaveBeenNthCalledWith(4, {
+      action: "closeSession",
+      sessionId: "s1",
+    });
+  });
+
+  it("rejects invalid click args (empty selector)", async () => {
+    const out = await executeMcpToolCall(
+      "click",
+      { sessionId: "s1", selector: "" },
+      mockClient(),
+    );
+    expect(out.isError).toBe(true);
+    const body = JSON.parse(out.content[0]?.text ?? "{}") as { code?: string };
+    expect(body.code).toBe("INVALID_TOOL_INPUT");
+  });
+
+  it("rejects invalid type args (missing text)", async () => {
+    const out = await executeMcpToolCall(
+      "type",
+      { sessionId: "s1", selector: "#a" },
+      mockClient(),
+    );
+    expect(out.isError).toBe(true);
+    const body = JSON.parse(out.content[0]?.text ?? "{}") as { code?: string };
+    expect(body.code).toBe("INVALID_TOOL_INPUT");
   });
 
   it("serializes CompanionHttpError with code and trace", async () => {
@@ -233,7 +364,10 @@ describe("executeMcpToolCall", () => {
       client,
     );
     expect(out.isError).toBe(true);
-    expect(out.content[0]?.text).toBe("generic");
+    const envelope = JSON.parse(out.content[0]?.text ?? "{}") as {
+      error: string;
+    };
+    expect(envelope.error).toBe("generic");
   });
 
   it("uses fallback text when postCommand throws a non-Error", async () => {
@@ -251,7 +385,9 @@ describe("executeMcpToolCall", () => {
       client,
     );
     expect(out.isError).toBe(true);
-    expect(out.content[0]?.text).toBe("Unknown MCP error.");
+    expect(
+      (JSON.parse(out.content[0]?.text ?? "{}") as { error: string }).error,
+    ).toBe("Unknown MCP error.");
   });
 
   it("returns fallback payload when result is not JSON-serializable", async () => {

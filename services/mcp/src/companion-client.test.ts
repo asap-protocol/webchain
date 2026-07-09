@@ -33,13 +33,86 @@ describe("CompanionHttpClient", () => {
   });
 
   it("checkHealth resolves when ok", async () => {
-    vi.mocked(fetch).mockResolvedValue({ ok: true } as Response);
+    vi.mocked(fetch).mockResolvedValue({
+      ok: true,
+      status: 200,
+      text: async () =>
+        JSON.stringify({
+          status: "ok",
+          service: "webchain-companion",
+          version: "0.1.0",
+          capabilities: [
+            "navigate",
+            "snapshot",
+            "click",
+            "type",
+            "closeSession",
+          ],
+        }),
+    } as Response);
     const c = new CompanionHttpClient({
       baseUrl: "http://127.0.0.1:8787",
       token: "tok",
     });
     await c.checkHealth();
     expect(fetch).toHaveBeenCalledWith("http://127.0.0.1:8787/health");
+  });
+
+  it("checkHealth throws when body fails CompanionHealthSchema", async () => {
+    vi.mocked(fetch).mockResolvedValue({
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify({ status: "ok" }),
+    } as Response);
+    const c = new CompanionHttpClient({
+      baseUrl: "http://127.0.0.1:8787",
+      token: "tok",
+    });
+    await expect(c.checkHealth()).rejects.toMatchObject({
+      name: "CompanionHttpError",
+      status: 200,
+      message: expect.stringContaining("schema validation"),
+    });
+  });
+
+  it("createSession wraps success-body Zod failures as CompanionHttpError", async () => {
+    vi.mocked(fetch).mockResolvedValue({
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify({ sessionId: "only" }),
+    } as Response);
+    const c = new CompanionHttpClient({
+      baseUrl: "http://127.0.0.1:8787",
+      token: "tok",
+    });
+    await expect(c.createSession()).rejects.toMatchObject({
+      name: "CompanionHttpError",
+      status: 200,
+      message: expect.stringContaining("schema validation"),
+    });
+  });
+
+  it("postCommand wraps success-body Zod failures as CompanionHttpError", async () => {
+    vi.mocked(fetch).mockResolvedValue({
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify({ unexpected: true }),
+    } as Response);
+    const c = new CompanionHttpClient({
+      baseUrl: "http://127.0.0.1:8787",
+      token: "tok",
+    });
+    await expect(
+      c.postCommand({
+        action: "navigate",
+        sessionId: "sess-1",
+        url: "https://ex.test/",
+      }),
+    ).rejects.toMatchObject({
+      name: "CompanionHttpError",
+      status: 200,
+      message: expect.stringContaining("schema validation"),
+    });
   });
 
   it("checkHealth throws CompanionHttpError when not ok", async () => {

@@ -13,8 +13,9 @@
 | `apps/extension` | WXT Chromium extension |
 | `packages/protocol` | Zod contracts + traces |
 | `packages/adapters/asap` | ASAP-oriented mapping |
+| [`examples/integrations`](examples/integrations) | MCP smoke harness (stub LLM); doc paths for Agents SDK + LangGraph. Run **`pnpm test:integrations`**. |
 
-Strategy, ADRs, PRDs: `product/` (see `product/README.md`). Repo conventions: [`AGENTS.md`](AGENTS.md).
+Repo conventions for contributors and coding agents: [`AGENTS.md`](AGENTS.md).
 
 ## Requirements
 
@@ -32,15 +33,20 @@ Strategy, ADRs, PRDs: `product/` (see `product/README.md`). Repo conventions: [`
 
 **Control plane → companion:** `NEXT_PUBLIC_COMPANION_URL`, `WEBCHAIN_LOCAL_TOKEN` / `NEXT_PUBLIC_WEBCHAIN_LOCAL_TOKEN` — see `.env.example`. Use **Ping companion** in the UI when both are running.
 
-**Companion HTTP:** `GET /health` (no token); `POST /sessions` and `POST /commands` with `x-webchain-token`. Errors return JSON (`error`, `trace`, optional `code`). CORS allows `localhost` / `127.0.0.1` dev origins.
+**Companion HTTP:** `GET /health` (no token); `POST /sessions` and `POST /commands` with `x-webchain-token`. Success bodies may carry optional **`lifecycle`** events; errors include JSON **`error`**, **`trace`**, optional **`code`**, optional **`lifecycle`**. CORS allows `localhost` / `127.0.0.1` dev origins.
+
+### MCP integrations (Phase 2)
+
+**Troubleshooting:** MCP exits immediately when **`GET /health`** fails against **`WEBCHAIN_COMPANION_ORIGIN`**. Run **`pnpm dev:companion`**, then reconcile **`WEBCHAIN_LOCAL_TOKEN`** with [`services/mcp/README.md`](services/mcp/README.md).
 
 ## Checks (match CI)
 
 ```bash
-pnpm lint && pnpm typecheck && pnpm test && pnpm test:coverage && pnpm test:integration && pnpm build
+pnpm lint && pnpm typecheck && pnpm test && pnpm test:coverage && pnpm test:integration && pnpm test:integrations && pnpm build
 ```
 
 - **Integration tests** need Chromium installed; they run companion + MCP conformance (`pnpm test:mcp-conformance` for MCP only).
+- **`pnpm test:integrations`** runs [examples/integrations](examples/integrations) smoke tests (deterministic MCP stdio harness; documented stand-in for Agents SDK / LangGraph LLM stubs in Phase 2).
 - **CI:** [`.github/workflows/ci.yml`](.github/workflows/ci.yml) — Ubuntu, Node 22, same steps as above.
 
 ## Deployment note

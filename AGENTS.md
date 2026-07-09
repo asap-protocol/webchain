@@ -67,10 +67,11 @@ Before opening a PR or handing work off:
 4. `pnpm test:coverage` — Turborepo `turbo test:coverage` (line coverage thresholds per FR11).
 5. `pnpm test:integration` — companion local browser loop **and** MCP stdio conformance (requires Playwright Chromium installed; see root `README.md`).
 6. `pnpm test:mcp-conformance` — MCP integration tests only (subset of step 5).
+7. `pnpm test:integrations` — framework smoke examples under `examples/integrations` (deterministic MCP stdio harness).
 
 Fix failures until green. Add or update tests when changing behavior in `packages/protocol`, `packages/runtime`, or HTTP/MCP surfaces.
 
-**CI:** On push to `main` and on pull requests, GitHub Actions runs `pnpm lint`, `typecheck`, `test`, `test:coverage`, `test:integration` (Playwright Chromium + companion loop + MCP conformance), and `build` on `ubuntu-latest` with Node 22 — see `.github/workflows/ci.yml`.
+**CI:** On push to `main` and on pull requests, GitHub Actions runs `pnpm lint`, `typecheck`, `test`, `test:coverage`, `test:integration` (Playwright Chromium + companion loop + MCP conformance), `test:integrations`, and `build` on `ubuntu-latest` with Node 22 — see `.github/workflows/ci.yml`.
 
 ## Architecture guardrails
 

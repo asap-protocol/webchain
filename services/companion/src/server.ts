@@ -1,13 +1,17 @@
 import cors from "@fastify/cors";
 import {
   CompanionApiErrorBodySchema,
+  CompanionCommandSuccessSchema,
   CompanionHealthSchema,
+  commandErrorLifecycle,
   createTraceContext,
   RUNTIME_ACTIONS,
   RuntimeCommandSchema,
   type RuntimeErrorCode,
   SessionCreatedResponseSchema,
   SessionCreatedSchema,
+  sessionClosedLifecycle,
+  sessionCreatedLifecycle,
   type TraceContext,
 } from "@webchain/protocol";
 import { type BrowserRuntime, isWebchainRuntimeError } from "@webchain/runtime";
@@ -23,29 +27,72 @@ function httpStatusForRuntimeCode(code: RuntimeErrorCode): number {
       return 503;
     case "COMMAND_FAILED":
       return 502;
+    case "INVALID_COMMAND_BODY":
+      return 400;
+    case "INVALID_TOOL_INPUT":
+      // MCP-only; sendRuntimeFailure must not call this for that code.
+      throw new Error(
+        "INVALID_TOOL_INPUT is MCP-only and must not be mapped at companion HTTP boundary.",
+      );
+    default: {
+      const _exhaustive: never = code;
+      return _exhaustive;
+    }
   }
+}
+
+function sessionIdFromBody(body: unknown): string | undefined {
+  if (
+    body &&
+    typeof body === "object" &&
+    "sessionId" in body &&
+    typeof (body as { sessionId: unknown }).sessionId === "string"
+  ) {
+    const sessionId = (body as { sessionId: string }).sessionId;
+    return sessionId.length > 0 ? sessionId : undefined;
+  }
+  return undefined;
 }
 
 function sendRuntimeFailure(
   reply: FastifyReply,
   error: unknown,
   trace: TraceContext,
+  sessionId?: string,
 ) {
   if (error instanceof z.ZodError) {
     const body = CompanionApiErrorBodySchema.parse({
       error: "Invalid request body.",
       trace,
+      code: "INVALID_COMMAND_BODY",
       details: error.flatten(),
+      lifecycle: commandErrorLifecycle(
+        trace.traceId,
+        "INVALID_COMMAND_BODY",
+        sessionId,
+      ),
     });
     return reply.code(400).send(body);
   }
 
   if (isWebchainRuntimeError(error)) {
+    // Keep MCP-only invariant without escaping CompanionApiErrorBodySchema.
+    if (error.code === "INVALID_TOOL_INPUT") {
+      const body = CompanionApiErrorBodySchema.parse({
+        error:
+          "Internal companion error: MCP-only INVALID_TOOL_INPUT reached HTTP boundary.",
+        trace,
+        lifecycle: commandErrorLifecycle(trace.traceId, undefined, sessionId),
+      });
+      return reply.code(500).send(body);
+    }
+
     const status = httpStatusForRuntimeCode(error.code);
     const body = CompanionApiErrorBodySchema.parse({
       error: error.message,
       trace,
       code: error.code,
+      lifecycle: commandErrorLifecycle(trace.traceId, error.code, sessionId),
     });
     return reply.code(status).send(body);
   }
@@ -53,6 +100,7 @@ function sendRuntimeFailure(
   const body = CompanionApiErrorBodySchema.parse({
     error: error instanceof Error ? error.message : "Unknown runtime error.",
     trace,
+    lifecycle: commandErrorLifecycle(trace.traceId, undefined, sessionId),
   });
   return reply.code(500).send(body);
 }
@@ -115,9 +163,14 @@ export async function createCompanionApp(
     const trace = createTraceContext();
     try {
       const session = await options.runtime.createSession();
+      const parsedSession = SessionCreatedSchema.parse(session);
       return SessionCreatedResponseSchema.parse({
-        ...SessionCreatedSchema.parse(session),
+        ...parsedSession,
         trace,
+        lifecycle: sessionCreatedLifecycle(
+          trace.traceId,
+          parsedSession.sessionId,
+        ),
       });
     } catch (error) {
       return sendRuntimeFailure(reply, error, trace);
@@ -126,6 +179,7 @@ export async function createCompanionApp(
 
   app.post("/commands", async (request, reply) => {
     const trace = createTraceContext();
+    const sessionId = sessionIdFromBody(request.body);
     try {
       const command = RuntimeCommandSchema.parse(request.body);
       const runtime = options.runtime;
@@ -133,42 +187,43 @@ export async function createCompanionApp(
       switch (command.action) {
         case "navigate": {
           const result = await runtime.navigate(command);
-          return {
+          return CompanionCommandSuccessSchema.parse({
             trace,
             result: { ...result, traceId: trace.traceId },
-          };
+          });
         }
         case "snapshot": {
           const result = await runtime.snapshot(command);
-          return {
+          return CompanionCommandSuccessSchema.parse({
             trace,
             result: { ...result, traceId: trace.traceId },
-          };
+          });
         }
         case "click": {
           const result = await runtime.click(command);
-          return {
+          return CompanionCommandSuccessSchema.parse({
             trace,
             result: { ...result, traceId: trace.traceId },
-          };
+          });
         }
         case "type": {
           const result = await runtime.type(command);
-          return {
+          return CompanionCommandSuccessSchema.parse({
             trace,
             result: { ...result, traceId: trace.traceId },
-          };
+          });
         }
         case "closeSession": {
           const result = await runtime.closeSession(command);
-          return {
+          return CompanionCommandSuccessSchema.parse({
             trace,
             result: { ...result, traceId: trace.traceId },
-          };
+            lifecycle: sessionClosedLifecycle(trace.traceId, command.sessionId),
+          });
         }
       }
     } catch (error) {
-      return sendRuntimeFailure(reply, error, trace);
+      return sendRuntimeFailure(reply, error, trace, sessionId);
     }
   });
 

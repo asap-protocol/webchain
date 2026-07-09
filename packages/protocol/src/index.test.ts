@@ -3,10 +3,13 @@ import {
   ActionResultSchema,
   CloseSessionResultSchema,
   CompanionApiErrorBodySchema,
+  CompanionCommandSuccessSchema,
   CompanionHealthSchema,
   CompanionRuntimeErrorBodySchema,
+  commandErrorLifecycle,
   createTraceContext,
   isMutationCommand,
+  McpToolErrorEnvelopeSchema,
   NavigateArgsSchema,
   NavigateCommandSchema,
   RuntimeCommandSchema,
@@ -14,7 +17,10 @@ import {
   SessionCreatedResponseSchema,
   SessionCreatedSchema,
   SessionIdArgsSchema,
+  SessionLifecycleEventSchema,
   SnapshotResultSchema,
+  sessionClosedLifecycle,
+  sessionCreatedLifecycle,
 } from "./index.js";
 
 describe("RuntimeCommandSchema", () => {
@@ -77,7 +83,7 @@ describe("RuntimeCommandSchema", () => {
   });
 });
 
-describe("RuntimeCommandSchema", () => {
+describe("RuntimeCommandSchema union coverage", () => {
   it("accepts every runtime command shape", () => {
     const samples = [
       {
@@ -124,6 +130,15 @@ describe("runtime error schemas", () => {
     expect(RuntimeErrorCodeSchema.safeParse("invalid").success).toBe(false);
   });
 
+  it("accepts INVALID_COMMAND_BODY and INVALID_TOOL_INPUT as distinct codes", () => {
+    expect(RuntimeErrorCodeSchema.parse("INVALID_COMMAND_BODY")).toBe(
+      "INVALID_COMMAND_BODY",
+    );
+    expect(RuntimeErrorCodeSchema.parse("INVALID_TOOL_INPUT")).toBe(
+      "INVALID_TOOL_INPUT",
+    );
+  });
+
   it("parses companion API error bodies with trace", () => {
     const trace = createTraceContext();
     const parsed = CompanionApiErrorBodySchema.parse({
@@ -166,7 +181,7 @@ describe("result and health schemas", () => {
     });
   });
 
-  it("parses session created and companion health", () => {
+  it("parses standalone SessionCreated payloads and CompanionHealth", () => {
     SessionCreatedSchema.parse({
       sessionId: "s",
       pageId: "p",
@@ -178,5 +193,110 @@ describe("result and health schemas", () => {
       version: "0.1.0",
       capabilities: ["navigate", "snapshot", "click", "type", "closeSession"],
     });
+  });
+
+  it("parses MCP and lifecycle envelopes", () => {
+    const trace = createTraceContext();
+    SessionLifecycleEventSchema.parse({
+      kind: "session_closed",
+      traceId: trace.traceId,
+      sessionId: "s1",
+    });
+    SessionCreatedResponseSchema.parse({
+      sessionId: "s1",
+      pageId: "p1",
+      createdAt: new Date().toISOString(),
+      trace,
+      lifecycle: {
+        kind: "session_created",
+        traceId: trace.traceId,
+        sessionId: "s1",
+      },
+    });
+    const err = McpToolErrorEnvelopeSchema.parse({
+      error: "oops",
+      code: "COMMAND_FAILED",
+      trace,
+      validation: {},
+    });
+    expect(err.code).toBe("COMMAND_FAILED");
+  });
+
+  it("parses companion command success responses with lifecycle", () => {
+    const trace = createTraceContext();
+    CompanionCommandSuccessSchema.parse({
+      trace,
+      result: { foo: 1 },
+      lifecycle: SessionLifecycleEventSchema.parse({
+        kind: "session_closed",
+        traceId: trace.traceId,
+        sessionId: "sid",
+      }),
+    });
+  });
+});
+
+describe("lifecycle helpers", () => {
+  const traceId = "00000000-0000-4000-8000-000000000001";
+  const sessionId = "session-abc";
+
+  it("commandErrorLifecycle builds command_error without code", () => {
+    const event = commandErrorLifecycle(traceId);
+    expect(event).toEqual({
+      kind: "command_error",
+      traceId,
+    });
+    expect(SessionLifecycleEventSchema.safeParse(event).success).toBe(true);
+  });
+
+  it("commandErrorLifecycle builds command_error with code", () => {
+    const event = commandErrorLifecycle(traceId, "INVALID_COMMAND_BODY");
+    expect(event).toEqual({
+      kind: "command_error",
+      traceId,
+      code: "INVALID_COMMAND_BODY",
+    });
+    expect(SessionLifecycleEventSchema.safeParse(event).success).toBe(true);
+  });
+
+  it("commandErrorLifecycle includes sessionId when provided", () => {
+    const event = commandErrorLifecycle(
+      traceId,
+      "SESSION_NOT_FOUND",
+      sessionId,
+    );
+    expect(event).toEqual({
+      kind: "command_error",
+      traceId,
+      code: "SESSION_NOT_FOUND",
+      sessionId,
+    });
+    expect(SessionLifecycleEventSchema.safeParse(event).success).toBe(true);
+  });
+
+  it("sessionCreatedLifecycle builds session_created", () => {
+    const event = sessionCreatedLifecycle(traceId, sessionId);
+    expect(event).toEqual({
+      kind: "session_created",
+      traceId,
+      sessionId,
+    });
+    expect(SessionLifecycleEventSchema.safeParse(event).success).toBe(true);
+  });
+
+  it("sessionClosedLifecycle builds session_closed", () => {
+    const event = sessionClosedLifecycle(traceId, sessionId);
+    expect(event).toEqual({
+      kind: "session_closed",
+      traceId,
+      sessionId,
+    });
+    expect(SessionLifecycleEventSchema.safeParse(event).success).toBe(true);
+  });
+
+  it("rejects invalid traceId in lifecycle helpers", () => {
+    expect(() => commandErrorLifecycle("not-a-uuid")).toThrow();
+    expect(() => sessionCreatedLifecycle("not-a-uuid", sessionId)).toThrow();
+    expect(() => sessionClosedLifecycle(traceId, sessionId)).not.toThrow();
   });
 });

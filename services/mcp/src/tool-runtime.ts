@@ -1,5 +1,8 @@
 import {
   ClickArgsSchema,
+  commandErrorLifecycle,
+  createTraceContext,
+  McpToolErrorEnvelopeSchema,
   NavigateArgsSchema,
   SessionIdArgsSchema,
   TypeArgsSchema,
@@ -68,139 +71,143 @@ function stringifyMcpPayload(value: unknown): string {
   }
 }
 
+function mcpSuccessContent(value: unknown): {
+  content: Array<{ type: "text"; text: string }>;
+} {
+  return {
+    content: [{ type: "text", text: stringifyMcpPayload(value) }],
+  };
+}
+
+function mcpErrorContent(partial: z.input<typeof McpToolErrorEnvelopeSchema>): {
+  content: Array<{ type: "text"; text: string }>;
+  isError: true;
+} {
+  return {
+    isError: true,
+    content: [
+      {
+        type: "text",
+        text: stringifyMcpPayload(McpToolErrorEnvelopeSchema.parse(partial)),
+      },
+    ],
+  };
+}
+
+type McpToolResult = {
+  content: Array<{ type: "text"; text: string }>;
+  isError?: boolean;
+};
+
+function invalidToolInputContent(error: z.ZodError): McpToolResult {
+  const trace = createTraceContext();
+  return mcpErrorContent({
+    error: "Invalid MCP tool arguments.",
+    code: "INVALID_TOOL_INPUT",
+    trace,
+    validation: error.flatten(),
+    lifecycle: commandErrorLifecycle(trace.traceId, "INVALID_TOOL_INPUT"),
+  });
+}
+
+function parseToolArgs<T>(
+  schema: z.ZodType<T>,
+  rawArgs: unknown,
+): { ok: true; value: T } | { ok: false; result: McpToolResult } {
+  try {
+    return { ok: true, value: schema.parse(rawArgs ?? {}) };
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      return { ok: false, result: invalidToolInputContent(error) };
+    }
+    throw error;
+  }
+}
+
 export async function executeMcpToolCall(
   name: string,
   rawArgs: unknown,
   client: CompanionHttpClient,
-): Promise<{
-  content: Array<{ type: "text"; text: string }>;
-  isError?: boolean;
-}> {
+): Promise<McpToolResult> {
   try {
     switch (name) {
       case "create_session": {
-        createSessionInputSchema.parse(rawArgs ?? {});
-        const created = await client.createSession();
-        return {
-          content: [{ type: "text", text: stringifyMcpPayload(created) }],
-        };
+        const parsed = parseToolArgs(createSessionInputSchema, rawArgs);
+        if (!parsed.ok) {
+          return parsed.result;
+        }
+        return mcpSuccessContent(await client.createSession());
       }
       case "navigate": {
-        const args = NavigateArgsSchema.parse(rawArgs ?? {});
-        const { trace, result } = await client.postCommand({
-          action: "navigate",
-          ...args,
-        });
-        return {
-          content: [
-            {
-              type: "text",
-              text: stringifyMcpPayload({ trace, result }),
-            },
-          ],
-        };
+        const parsed = parseToolArgs(NavigateArgsSchema, rawArgs);
+        if (!parsed.ok) {
+          return parsed.result;
+        }
+        return mcpSuccessContent(
+          await client.postCommand({ action: "navigate", ...parsed.value }),
+        );
       }
       case "snapshot": {
-        const args = SessionIdArgsSchema.parse(rawArgs ?? {});
-        const { trace, result } = await client.postCommand({
-          action: "snapshot",
-          ...args,
-        });
-        return {
-          content: [
-            {
-              type: "text",
-              text: stringifyMcpPayload({ trace, result }),
-            },
-          ],
-        };
+        const parsed = parseToolArgs(SessionIdArgsSchema, rawArgs);
+        if (!parsed.ok) {
+          return parsed.result;
+        }
+        return mcpSuccessContent(
+          await client.postCommand({ action: "snapshot", ...parsed.value }),
+        );
       }
       case "click": {
-        const args = ClickArgsSchema.parse(rawArgs ?? {});
-        const { trace, result } = await client.postCommand({
-          action: "click",
-          ...args,
-        });
-        return {
-          content: [
-            {
-              type: "text",
-              text: stringifyMcpPayload({ trace, result }),
-            },
-          ],
-        };
+        const parsed = parseToolArgs(ClickArgsSchema, rawArgs);
+        if (!parsed.ok) {
+          return parsed.result;
+        }
+        return mcpSuccessContent(
+          await client.postCommand({ action: "click", ...parsed.value }),
+        );
       }
       case "type": {
-        const args = TypeArgsSchema.parse(rawArgs ?? {});
-        const { trace, result } = await client.postCommand({
-          action: "type",
-          ...args,
-        });
-        return {
-          content: [
-            {
-              type: "text",
-              text: stringifyMcpPayload({ trace, result }),
-            },
-          ],
-        };
+        const parsed = parseToolArgs(TypeArgsSchema, rawArgs);
+        if (!parsed.ok) {
+          return parsed.result;
+        }
+        return mcpSuccessContent(
+          await client.postCommand({ action: "type", ...parsed.value }),
+        );
       }
       case "close_session": {
-        const args = SessionIdArgsSchema.parse(rawArgs ?? {});
-        const { trace, result } = await client.postCommand({
-          action: "closeSession",
-          sessionId: args.sessionId,
-        });
-        return {
-          content: [
-            {
-              type: "text",
-              text: stringifyMcpPayload({ trace, result }),
-            },
-          ],
-        };
+        const parsed = parseToolArgs(SessionIdArgsSchema, rawArgs);
+        if (!parsed.ok) {
+          return parsed.result;
+        }
+        return mcpSuccessContent(
+          await client.postCommand({
+            action: "closeSession",
+            sessionId: parsed.value.sessionId,
+          }),
+        );
       }
       default:
-        return {
-          isError: true,
-          content: [
-            {
-              type: "text",
-              text: `Unknown tool: ${name}`,
-            },
-          ],
-        };
+        return mcpErrorContent({ error: `Unknown tool: ${name}` });
     }
   } catch (error) {
     if (error instanceof CompanionHttpError) {
-      const payload: Record<string, unknown> = {
+      return mcpErrorContent({
         error: error.message,
-      };
-      if (error.code) {
-        payload.code = error.code;
-      }
-      if (error.trace) {
-        payload.trace = error.trace;
-      }
-      return {
-        isError: true,
-        content: [
-          {
-            type: "text",
-            text: JSON.stringify(payload, null, 2),
-          },
-        ],
-      };
+        code: error.code,
+        trace: error.trace,
+        lifecycle: error.lifecycle,
+      });
     }
-    return {
-      isError: true,
-      content: [
-        {
-          type: "text",
-          text: error instanceof Error ? error.message : "Unknown MCP error.",
-        },
-      ],
-    };
+    // Defense in depth: response-parse ZodErrors should be CompanionHttpError.
+    // Never map a late ZodError to INVALID_TOOL_INPUT.
+    if (error instanceof z.ZodError) {
+      return mcpErrorContent({
+        error: `Unexpected schema error after tool-arg validation: ${error.message}`,
+      });
+    }
+    return mcpErrorContent({
+      error: error instanceof Error ? error.message : "Unknown MCP error.",
+    });
   }
 }
 

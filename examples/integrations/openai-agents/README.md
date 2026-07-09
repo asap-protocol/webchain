@@ -1,20 +1,13 @@
 # OpenAI Agents SDK (smoke / integration notes)
 
-**Status:** documentation stub for Phase 2 — wire your Agents SDK client to the Webchain MCP server (stdio) per upstream docs.
+**Default CI posture:** the OpenAI Agents SDK case in **`../framework-smokes.integration.test.ts`** (`describe.each`) mimics the MCP tool wiring Agents SDK integrations would expose, without invoking a billed LLM router.
 
-## Preconditions
+On a developer machine,
 
-1. Companion: `pnpm dev:companion` (from repo root).
-2. MCP: configure your agent host to launch `pnpm --filter @webchain/mcp start` (or `tsx services/mcp/src/index.ts`) with:
-   - `WEBCHAIN_COMPANION_ORIGIN=http://127.0.0.1:8787`
-   - `WEBCHAIN_LOCAL_TOKEN` matching the companion.
+`pnpm dev:companion` → run **`pnpm test:integrations`** (or **`pnpm --filter @examples/webchain-agent-smokes test:smoke-only`**) → point your Agents host at **`pnpm --filter @webchain/mcp start`** with companion-aligned env vars documented in [`services/mcp/README.md`](../../../services/mcp/README.md).
 
-## Validation
+**Optional live path:** upstream Agents SDK MCP connectors may send traffic to OpenAI-hosted models—prefer environment variables mirrored from `.env.example` placeholders and never commit real keys.
 
-Run the repository’s MCP conformance suite (no OpenAI API key required):
-
-`pnpm test:mcp-conformance`
-
-## Product reference
+### Product traceability
 
 [`product/specs/prd-phase-2-mcp-native-surface.md`](../../../product/specs/prd-phase-2-mcp-native-surface.md)
