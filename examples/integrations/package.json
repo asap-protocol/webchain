@@ -1,0 +1,20 @@
+{
+  "name": "@examples/webchain-agent-smokes",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test:smoke-only": "vitest run --config vitest.integration.config.ts"
+  },
+  "devDependencies": {
+    "@modelcontextprotocol/sdk": "^1.27.1",
+    "@types/node": "^25.4.0",
+    "@webchain/protocol": "workspace:*",
+    "@webchain/mcp": "workspace:*",
+    "@webchain/companion": "workspace:*",
+    "@webchain/runtime": "workspace:*",
+    "tsx": "^4.21.0",
+    "typescript": "^5.9.3",
+    "vitest": "^4.0.18"
+  }
+}

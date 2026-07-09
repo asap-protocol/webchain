@@ -14,6 +14,7 @@
     "test:coverage": "turbo test:coverage",
     "test:integration": "pnpm --filter @webchain/companion test:integration && pnpm --filter @webchain/mcp test:integration",
     "test:mcp-conformance": "pnpm --filter @webchain/mcp test:integration",
+    "test:integrations": "pnpm --filter @examples/webchain-agent-smokes test:smoke-only",
     "lint": "biome check .",
     "format": "biome format --write .",
     "dev:web": "pnpm --filter @webchain/control-plane dev",

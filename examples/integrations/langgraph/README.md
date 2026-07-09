@@ -1,16 +1,17 @@
 # LangGraph (smoke / integration notes)
 
-**Status:** documentation stub for Phase 2 — connect LangGraph tool nodes to the Webchain MCP stdio server per LangGraph + MCP documentation.
+LangGraph integrations typically wrap MCP transports via tool-call nodes.
 
-## Preconditions
+The LangGraph case lives beside the Agents SDK stub in **`../framework-smokes.integration.test.ts`** (`describe.each`).
 
-1. Companion: `pnpm dev:companion` (from repo root).
-2. MCP: same environment as [`../openai-agents/README.md`](../openai-agents/README.md).
+**Smoke command (`pnpm test:integrations`):**
 
-## Validation
+```bash
+pnpm --filter @examples/webchain-agent-smokes test:smoke-only
+```
 
-`pnpm test:mcp-conformance`
+This shares the MCP stdio launcher + Chromium expectations described in [`../openai-agents/README.md`](../openai-agents/README.md).
 
-## Product reference
+### Product traceability
 
 [`product/specs/prd-phase-2-mcp-native-surface.md`](../../../product/specs/prd-phase-2-mcp-native-surface.md)

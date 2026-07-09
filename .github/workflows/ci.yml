@@ -55,5 +55,8 @@ jobs:
       - name: Integration tests
         run: pnpm test:integration
 
+      - name: Framework smoke examples (stub MCP)
+        run: pnpm test:integrations
+
       - name: Build
         run: pnpm build
