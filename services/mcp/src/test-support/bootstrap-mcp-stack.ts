@@ -48,14 +48,37 @@ export async function bootstrapMcpStack(
     stderr: "pipe",
   });
 
+  const stderrChunks: string[] = [];
+  stdioTransport.stderr?.on("data", (chunk: Buffer | string) => {
+    stderrChunks.push(
+      typeof chunk === "string" ? chunk : chunk.toString("utf8"),
+    );
+  });
+
   const client = new Client({ name: clientName, version: "0.0.1" });
-  await client.connect(stdioTransport);
+  try {
+    await client.connect(stdioTransport);
+  } catch (error) {
+    await client.close().catch(() => undefined);
+    await stdioTransport.close().catch(() => undefined);
+    await runtime.shutdown().catch(() => undefined);
+    await app.close().catch(() => undefined);
+    const stderr = stderrChunks.join("").trim();
+    const detail = stderr.length > 0 ? `\nMCP stderr:\n${stderr}` : "";
+    throw new Error(
+      `Failed to connect MCP stdio client: ${
+        error instanceof Error ? error.message : String(error)
+      }${detail}`,
+      { cause: error },
+    );
+  }
 
   return {
     client,
     app,
     runtime,
     shutdown: async () => {
+      await client.close();
       await stdioTransport.close();
       await runtime.shutdown();
       await app.close();

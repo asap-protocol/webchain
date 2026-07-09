@@ -24,7 +24,7 @@ On startup, MCP calls **`GET /health`**; if the companion is unreachable, the pr
 | `type` | `POST /commands` (`action: "type"`) |
 | `close_session` | `POST /commands` (`action: "closeSession"`) |
 
-Successful tool responses include **`trace`** and **`result`** JSON from the companion (`traceId` is also merged into command results).
+Successful **command** tool responses include companion **`{ trace, result }`** (and optional **`lifecycle`** on close). **`create_session`** is different: success is a flat **`SessionCreatedResponse`** (`sessionId`, `pageId`, `createdAt`, `trace`, optional `lifecycle`) — not wrapped in `{ trace, result }`.
 
 Errors return JSON (`McpToolErrorEnvelope`): **`error`** (human-readable message), optional **`code`** (`RuntimeErrorCode`), optional **`trace`**, **`validation`** detail for Zod issues, and optional **`lifecycle`** (`SessionLifecycleEvent`). No secrets belong in payloads.
 
@@ -65,4 +65,4 @@ Subpath exports are **for integration tests only** (MCP conformance, `examples/i
 | `@webchain/mcp/test-support/bootstrap-mcp-stack` | `bootstrapMcpStack()` — headless Chromium, companion on ephemeral port, MCP stdio client |
 | `@webchain/mcp/test-support/mcp-client-helpers` | `readToolText()`, `parseToolJson()` — parse MCP `tools/call` text content |
 
-`bootstrapMcpStack({ token?, clientName? })` returns `{ client, app, runtime, shutdown }`. Call `shutdown()` in `afterAll` to close stdio, browser, and companion.
+`bootstrapMcpStack({ token?, clientName? })` returns `{ client, app, runtime, shutdown }`. Call `shutdown()` in `afterAll` to close the MCP client, stdio transport, browser, and companion. On connect failure, stderr from the MCP child is included in the thrown error.

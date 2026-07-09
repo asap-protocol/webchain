@@ -259,6 +259,21 @@ describe("lifecycle helpers", () => {
     expect(SessionLifecycleEventSchema.safeParse(event).success).toBe(true);
   });
 
+  it("commandErrorLifecycle includes sessionId when provided", () => {
+    const event = commandErrorLifecycle(
+      traceId,
+      "SESSION_NOT_FOUND",
+      sessionId,
+    );
+    expect(event).toEqual({
+      kind: "command_error",
+      traceId,
+      code: "SESSION_NOT_FOUND",
+      sessionId,
+    });
+    expect(SessionLifecycleEventSchema.safeParse(event).success).toBe(true);
+  });
+
   it("sessionCreatedLifecycle builds session_created", () => {
     const event = sessionCreatedLifecycle(traceId, sessionId);
     expect(event).toEqual({

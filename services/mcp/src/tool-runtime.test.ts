@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { z } from "zod";
 import type { CompanionHttpClient } from "./companion-client.js";
 import { CompanionHttpError } from "./companion-client.js";
 import { executeMcpToolCall, getMcpToolDefinitions } from "./tool-runtime.js";
@@ -139,8 +140,85 @@ describe("executeMcpToolCall", () => {
       mockClient(),
     );
     expect(out.isError).toBe(true);
-    const body = JSON.parse(out.content[0]?.text ?? "{}") as { code?: string };
+    const body = JSON.parse(out.content[0]?.text ?? "{}") as {
+      code?: string;
+      lifecycle?: { code?: string };
+    };
     expect(body.code).toBe("INVALID_TOOL_INPUT");
+    expect(body.lifecycle?.code).toBe("INVALID_TOOL_INPUT");
+  });
+
+  it("does not label companion response ZodError as INVALID_TOOL_INPUT", async () => {
+    const client = {
+      checkHealth: vi.fn(),
+      createSession: vi.fn(async () => {
+        throw new CompanionHttpError(
+          "Companion response failed schema validation: Required",
+          { status: 200 },
+        );
+      }),
+      postCommand: vi.fn(),
+    } as unknown as CompanionHttpClient;
+
+    const out = await executeMcpToolCall("create_session", {}, client);
+    expect(out.isError).toBe(true);
+    const body = JSON.parse(out.content[0]?.text ?? "{}") as {
+      error: string;
+      code?: string;
+    };
+    expect(body.code).not.toBe("INVALID_TOOL_INPUT");
+    expect(body.error).toContain("schema validation");
+  });
+
+  it("does not label companion postCommand ZodError as INVALID_TOOL_INPUT", async () => {
+    const client = {
+      checkHealth: vi.fn(),
+      createSession: vi.fn(),
+      postCommand: vi.fn(async () => {
+        throw new CompanionHttpError(
+          "Companion response failed schema validation: Invalid companion success body",
+          { status: 200 },
+        );
+      }),
+    } as unknown as CompanionHttpClient;
+
+    const out = await executeMcpToolCall(
+      "navigate",
+      { sessionId: "s1", url: "https://example.com" },
+      client,
+    );
+    expect(out.isError).toBe(true);
+    const body = JSON.parse(out.content[0]?.text ?? "{}") as {
+      error: string;
+      code?: string;
+    };
+    expect(body.code).not.toBe("INVALID_TOOL_INPUT");
+    expect(body.error).toContain("schema validation");
+  });
+
+  it("treats unexpected ZodError from companion client as generic MCP error", async () => {
+    const client = {
+      checkHealth: vi.fn(),
+      createSession: vi.fn(async () => {
+        throw new z.ZodError([
+          {
+            code: "custom",
+            path: ["sessionId"],
+            message: "Required",
+          },
+        ]);
+      }),
+      postCommand: vi.fn(),
+    } as unknown as CompanionHttpClient;
+
+    const out = await executeMcpToolCall("create_session", {}, client);
+    expect(out.isError).toBe(true);
+    const body = JSON.parse(out.content[0]?.text ?? "{}") as {
+      error: string;
+      code?: string;
+    };
+    expect(body.code).not.toBe("INVALID_TOOL_INPUT");
+    expect(body.error).toContain("Unexpected schema error");
   });
 
   it("snapshots, clicks, types, and closes sessions", async () => {

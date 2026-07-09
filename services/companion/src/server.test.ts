@@ -9,7 +9,7 @@ function parseApiError(res: { body: string }) {
     trace: { traceId: string; runId: string; createdAt: string };
     code?: string;
     details?: unknown;
-    lifecycle?: { kind: string };
+    lifecycle?: { kind: string; code?: string; sessionId?: string };
   };
 }
 
@@ -246,6 +246,7 @@ describe("createCompanionApp", () => {
     expect(body.details).toBeDefined();
     expect(body.code).toBe("INVALID_COMMAND_BODY");
     expect(body.lifecycle?.kind).toBe("command_error");
+    expect(body.lifecycle?.code).toBe("INVALID_COMMAND_BODY");
     await app.close();
   });
 
@@ -278,6 +279,7 @@ describe("createCompanionApp", () => {
     expect(body.trace.traceId).toBeTruthy();
     expect(body.code).toBeUndefined();
     expect(body.lifecycle?.kind).toBe("command_error");
+    expect(body.lifecycle?.sessionId).toBe("s1");
     await app.close();
   });
 
@@ -312,6 +314,8 @@ describe("createCompanionApp", () => {
     expect(body.code).toBe("SESSION_NOT_FOUND");
     expect(body.trace.traceId).toBeTruthy();
     expect(body.lifecycle?.kind).toBe("command_error");
+    expect(body.lifecycle?.code).toBe("SESSION_NOT_FOUND");
+    expect(body.lifecycle?.sessionId).toBe("s1");
     await app.close();
   });
 
@@ -343,6 +347,8 @@ describe("createCompanionApp", () => {
     expect(body.code).toBe("COMMAND_FAILED");
     expect(body.trace.traceId).toBeTruthy();
     expect(body.lifecycle?.kind).toBe("command_error");
+    expect(body.lifecycle?.code).toBe("COMMAND_FAILED");
+    expect(body.lifecycle?.sessionId).toBe("s1");
     await app.close();
   });
 
@@ -373,6 +379,12 @@ describe("createCompanionApp", () => {
     });
 
     expect(res.statusCode).toBe(500);
+    const body = parseApiError(res);
+    expect(body.trace.traceId).toBeTruthy();
+    expect(body.code).toBeUndefined();
+    expect(body.lifecycle?.kind).toBe("command_error");
+    expect(body.lifecycle?.sessionId).toBe("s1");
+    expect(body.error).toContain("INVALID_TOOL_INPUT");
     await app.close();
   });
 
@@ -402,6 +414,7 @@ describe("createCompanionApp", () => {
     expect(body.code).toBe("BROWSER_NOT_INSTALLED");
     expect(body.trace.traceId).toBeTruthy();
     expect(body.lifecycle?.kind).toBe("command_error");
+    expect(body.lifecycle?.code).toBe("BROWSER_NOT_INSTALLED");
     await app.close();
   });
 });

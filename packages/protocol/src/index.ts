@@ -182,11 +182,13 @@ export type SessionLifecycleEvent = z.infer<typeof SessionLifecycleEventSchema>;
 export function commandErrorLifecycle(
   traceId: string,
   code?: RuntimeErrorCode,
+  sessionId?: string,
 ): SessionLifecycleEvent {
   return SessionLifecycleEventSchema.parse({
     kind: "command_error",
     traceId,
     ...(code !== undefined ? { code } : {}),
+    ...(sessionId !== undefined ? { sessionId } : {}),
   });
 }
 

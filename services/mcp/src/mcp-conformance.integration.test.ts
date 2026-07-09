@@ -46,6 +46,8 @@ describe("MCP stdio conformance (real companion + Chromium)", () => {
     expect(failed.isError).toBe(true);
     const envelope = McpToolErrorEnvelopeSchema.parse(parseToolJson(failed));
     expect(envelope.code).toBe("INVALID_TOOL_INPUT");
+    expect(envelope.lifecycle?.code).toBe("INVALID_TOOL_INPUT");
+    expect(envelope.lifecycle?.kind).toBe("command_error");
 
     await client.callTool({
       name: "close_session",
