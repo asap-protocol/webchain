@@ -8,14 +8,14 @@
   },
   "devDependencies": {
     "@modelcontextprotocol/sdk": "^1.27.1",
-    "@types/node": "^25.4.0",
+    "@types/node": "^26.1.1",
     "@webchain/protocol": "workspace:*",
     "@webchain/mcp": "workspace:*",
     "@webchain/companion": "workspace:*",
     "@webchain/runtime": "workspace:*",
-    "tsx": "^4.21.0",
-    "typescript": "^5.9.3",
-    "vitest": "^4.0.18"
+    "tsx": "^4.23.1",
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.10"
   },
   "repository": {
     "type": "git",
