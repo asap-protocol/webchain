@@ -7,7 +7,7 @@
     "test:smoke-only": "vitest run --config vitest.integration.config.ts"
   },
   "devDependencies": {
-    "@modelcontextprotocol/sdk": "^1.27.1",
+    "@modelcontextprotocol/sdk": "^1.29.0",
     "@types/node": "^25.4.0",
     "@webchain/protocol": "workspace:*",
     "@webchain/mcp": "workspace:*",
