@@ -20,5 +20,14 @@
   },
   "devDependencies": {
     "vitest": "^4.0.18"
-  }
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/asap-protocol/webchain.git",
+    "directory": "apps/control-plane"
+  },
+  "bugs": {
+    "url": "https://github.com/asap-protocol/webchain/issues"
+  },
+  "homepage": "https://github.com/asap-protocol/webchain#readme"
 }

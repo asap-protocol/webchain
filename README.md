@@ -24,6 +24,11 @@ Repo conventions for contributors and coding agents: [`AGENTS.md`](AGENTS.md).
 
 ## Setup
 
+```bash
+git clone https://github.com/asap-protocol/webchain.git
+cd webchain
+```
+
 1. `cp .env.example .env` and fill tokens/URLs as needed.
 2. `pnpm install` (repo root).
 3. **Chromium (once):** `pnpm --filter @webchain/runtime exec playwright install chromium`

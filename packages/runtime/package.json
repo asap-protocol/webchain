@@ -15,5 +15,14 @@
   "dependencies": {
     "@webchain/protocol": "workspace:*",
     "playwright": "^1.58.2"
-  }
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/asap-protocol/webchain.git",
+    "directory": "packages/runtime"
+  },
+  "bugs": {
+    "url": "https://github.com/asap-protocol/webchain/issues"
+  },
+  "homepage": "https://github.com/asap-protocol/webchain#readme"
 }

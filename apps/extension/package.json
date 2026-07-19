@@ -14,5 +14,14 @@
     "@types/chrome": "^0.1.37",
     "vitest": "^4.0.18",
     "wxt": "^0.20.18"
-  }
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/asap-protocol/webchain.git",
+    "directory": "apps/extension"
+  },
+  "bugs": {
+    "url": "https://github.com/asap-protocol/webchain/issues"
+  },
+  "homepage": "https://github.com/asap-protocol/webchain#readme"
 }

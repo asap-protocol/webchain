@@ -14,5 +14,14 @@
   },
   "dependencies": {
     "zod": "^4.3.6"
-  }
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/asap-protocol/webchain.git",
+    "directory": "packages/protocol"
+  },
+  "bugs": {
+    "url": "https://github.com/asap-protocol/webchain/issues"
+  },
+  "homepage": "https://github.com/asap-protocol/webchain#readme"
 }

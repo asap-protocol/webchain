@@ -25,5 +25,14 @@
   "devDependencies": {
     "@webchain/companion": "workspace:*",
     "@webchain/runtime": "workspace:*"
-  }
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/asap-protocol/webchain.git",
+    "directory": "services/mcp"
+  },
+  "bugs": {
+    "url": "https://github.com/asap-protocol/webchain/issues"
+  },
+  "homepage": "https://github.com/asap-protocol/webchain#readme"
 }
