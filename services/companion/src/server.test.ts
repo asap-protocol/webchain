@@ -247,6 +247,51 @@ describe("createCompanionApp", () => {
     expect(body.code).toBe("INVALID_COMMAND_BODY");
     expect(body.lifecycle?.kind).toBe("command_error");
     expect(body.lifecycle?.code).toBe("INVALID_COMMAND_BODY");
+    expect(body.lifecycle?.sessionId).toBeUndefined();
+    await app.close();
+  });
+
+  it("correlates sessionId on invalid command body when present", async () => {
+    const { app } = await createCompanionApp({
+      runtime: mockRuntime(),
+      logger: false,
+      localToken: "tok",
+    });
+
+    const res = await app.inject({
+      method: "POST",
+      url: "/commands",
+      headers: { "x-webchain-token": "tok" },
+      payload: { action: "navigate", sessionId: "s1", url: "not-a-url" },
+    });
+
+    expect(res.statusCode).toBe(400);
+    const body = parseApiError(res);
+    expect(body.code).toBe("INVALID_COMMAND_BODY");
+    expect(body.lifecycle?.kind).toBe("command_error");
+    expect(body.lifecycle?.code).toBe("INVALID_COMMAND_BODY");
+    expect(body.lifecycle?.sessionId).toBe("s1");
+    await app.close();
+  });
+
+  it("omits empty sessionId from invalid command body lifecycle", async () => {
+    const { app } = await createCompanionApp({
+      runtime: mockRuntime(),
+      logger: false,
+      localToken: "tok",
+    });
+
+    const res = await app.inject({
+      method: "POST",
+      url: "/commands",
+      headers: { "x-webchain-token": "tok" },
+      payload: { action: "navigate", sessionId: "", url: "https://example.com" },
+    });
+
+    expect(res.statusCode).toBe(400);
+    const body = parseApiError(res);
+    expect(body.code).toBe("INVALID_COMMAND_BODY");
+    expect(body.lifecycle?.sessionId).toBeUndefined();
     await app.close();
   });
 
