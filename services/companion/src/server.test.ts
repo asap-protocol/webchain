@@ -417,4 +417,34 @@ describe("createCompanionApp", () => {
     expect(body.lifecycle?.code).toBe("BROWSER_NOT_INSTALLED");
     await app.close();
   });
+
+  it("returns 503 when runtime reports browser launch failure", async () => {
+    const runtime = mockRuntime({
+      createSession: vi.fn(async () => {
+        throw new WebchainRuntimeError(
+          "BROWSER_LAUNCH_FAILED",
+          "chromium exited on launch",
+        );
+      }),
+    });
+    const { app } = await createCompanionApp({
+      runtime,
+      logger: false,
+      localToken: "tok",
+    });
+
+    const res = await app.inject({
+      method: "POST",
+      url: "/sessions",
+      headers: { "x-webchain-token": "tok" },
+    });
+
+    expect(res.statusCode).toBe(503);
+    const body = parseApiError(res);
+    expect(body.code).toBe("BROWSER_LAUNCH_FAILED");
+    expect(body.error).toContain("chromium exited on launch");
+    expect(body.lifecycle?.kind).toBe("command_error");
+    expect(body.lifecycle?.code).toBe("BROWSER_LAUNCH_FAILED");
+    await app.close();
+  });
 });
