@@ -33,12 +33,32 @@ type SessionRecord = {
 export class BrowserRuntime {
   private browserPromise: Promise<Browser> | null = null;
   private sessions = new Map<string, SessionRecord>();
+  private browserDisconnectHandler: (() => void) | null = null;
 
   constructor(private readonly options: BrowserRuntimeOptions = {}) {}
 
+  private invalidateBrowserState(): void {
+    this.browserPromise = null;
+    this.browserDisconnectHandler = null;
+    this.sessions.clear();
+  }
+
+  private attachBrowserDisconnectHandler(browser: Browser): void {
+    if (this.browserDisconnectHandler) {
+      return;
+    }
+    this.browserDisconnectHandler = () => {
+      this.invalidateBrowserState();
+    };
+    browser.on("disconnected", this.browserDisconnectHandler);
+  }
+
   private async getBrowser(): Promise<Browser> {
     if (!this.browserPromise) {
-      this.browserPromise = this.launchBrowser();
+      this.browserPromise = this.launchBrowser().then((browser) => {
+        this.attachBrowserDisconnectHandler(browser);
+        return browser;
+      });
     }
 
     try {
@@ -47,6 +67,11 @@ export class BrowserRuntime {
       this.browserPromise = null;
       throw error;
     }
+  }
+
+  private isBrowserClosedError(error: unknown): boolean {
+    const message = error instanceof Error ? error.message : String(error);
+    return message.includes("has been closed");
   }
 
   private async launchBrowser() {
@@ -70,8 +95,24 @@ export class BrowserRuntime {
   }
 
   async createSession(): Promise<RuntimeSession> {
+    return this.createSessionWithRetry(false);
+  }
+
+  private async createSessionWithRetry(
+    isRetry: boolean,
+  ): Promise<RuntimeSession> {
     const browser = await this.getBrowser();
-    const context = await browser.newContext();
+    let context: BrowserContext;
+    try {
+      context = await browser.newContext();
+    } catch (error) {
+      if (!isRetry && this.isBrowserClosedError(error)) {
+        this.invalidateBrowserState();
+        return this.createSessionWithRetry(true);
+      }
+      this.invalidateBrowserState();
+      throw mapPlaywrightLaunchError(error);
+    }
 
     try {
       const page = await context.newPage();
@@ -91,6 +132,11 @@ export class BrowserRuntime {
       };
     } catch (error) {
       await context.close().catch(() => {});
+      if (!isRetry && this.isBrowserClosedError(error)) {
+        this.invalidateBrowserState();
+        return this.createSessionWithRetry(true);
+      }
+      this.invalidateBrowserState();
       throw mapPlaywrightLaunchError(error);
     }
   }

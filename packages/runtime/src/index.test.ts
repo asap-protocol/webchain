@@ -70,9 +70,20 @@ function createMockBrowserTree() {
     close: contextClose,
   };
   const browserClose = vi.fn().mockResolvedValue(undefined);
+  const disconnectedHandlers: Array<() => void> = [];
   const browser = {
     newContext: vi.fn(async () => context),
     close: browserClose,
+    on: vi.fn((event: string, handler: () => void) => {
+      if (event === "disconnected") {
+        disconnectedHandlers.push(handler);
+      }
+    }),
+    emitDisconnected: () => {
+      for (const handler of disconnectedHandlers) {
+        handler();
+      }
+    },
   };
   return {
     browser,
@@ -328,5 +339,41 @@ describe("BrowserRuntime", () => {
       code: "BROWSER_LAUNCH_FAILED",
       message: "other failure",
     });
+  });
+
+  it("recovers from a dead browser by relaunching on the next createSession", async () => {
+    const first = createMockBrowserTree();
+    const second = createMockBrowserTree();
+    first.browser.newContext.mockRejectedValueOnce(
+      new Error("browser.newContext: Target page, context or browser has been closed"),
+    );
+    mockChromiumLaunch
+      .mockResolvedValueOnce(first.browser)
+      .mockResolvedValueOnce(second.browser);
+
+    const rt = new BrowserRuntime({ headless: true });
+    const session = await rt.createSession();
+
+    expect(session.sessionId).toBeTruthy();
+    expect(mockChromiumLaunch).toHaveBeenCalledTimes(2);
+    await rt.shutdown();
+  });
+
+  it("clears sessions when the browser disconnects", async () => {
+    const { browser } = createMockBrowserTree();
+    mockChromiumLaunch.mockResolvedValueOnce(browser);
+
+    const rt = new BrowserRuntime({ headless: true });
+    const { sessionId } = await rt.createSession();
+    browser.emitDisconnected();
+
+    await expect(
+      rt.navigate({
+        action: "navigate",
+        sessionId,
+        url: "https://example.com",
+      }),
+    ).rejects.toMatchObject({ code: "SESSION_NOT_FOUND" });
+    await rt.shutdown();
   });
 });
