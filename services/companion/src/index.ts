@@ -9,9 +9,16 @@ const runtime = new BrowserRuntime({
 
 const { app } = await createCompanionApp({ runtime });
 
+let closing = false;
+
 const closeGracefully = async () => {
-  await runtime.shutdown();
+  if (closing) {
+    return;
+  }
+  closing = true;
+
   await app.close();
+  await runtime.shutdown();
   process.exit(0);
 };
 

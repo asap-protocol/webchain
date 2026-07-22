@@ -329,4 +329,32 @@ describe("BrowserRuntime", () => {
       message: "other failure",
     });
   });
+
+  it("rejects createSession after shutdown without relaunching the browser", async () => {
+    const { browser } = createMockBrowserTree();
+    mockChromiumLaunch.mockResolvedValueOnce(browser);
+
+    const rt = new BrowserRuntime({ headless: true });
+    await rt.createSession();
+    await rt.shutdown();
+
+    mockChromiumLaunch.mockClear();
+    await expect(rt.createSession()).rejects.toMatchObject({
+      code: "COMMAND_FAILED",
+      message: "Runtime is shutting down; cannot create session",
+    });
+    expect(mockChromiumLaunch).not.toHaveBeenCalled();
+  });
+
+  it("shutdown is idempotent", async () => {
+    const { browser, browserClose } = createMockBrowserTree();
+    mockChromiumLaunch.mockResolvedValueOnce(browser);
+
+    const rt = new BrowserRuntime({ headless: true });
+    await rt.createSession();
+    await rt.shutdown();
+    await rt.shutdown();
+
+    expect(browserClose).toHaveBeenCalledTimes(1);
+  });
 });
