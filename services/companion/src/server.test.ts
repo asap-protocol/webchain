@@ -226,6 +226,58 @@ describe("createCompanionApp", () => {
     await app.close();
   });
 
+  it("allows localhost and 127.0.0.1 CORS origins on health", async () => {
+    const { app } = await createCompanionApp({
+      runtime: mockRuntime(),
+      logger: false,
+    });
+
+    for (const origin of [
+      "http://localhost:3000",
+      "http://127.0.0.1:5173",
+    ] as const) {
+      const res = await app.inject({
+        method: "GET",
+        url: "/health",
+        headers: { origin },
+      });
+      expect(res.statusCode).toBe(200);
+      expect(res.headers["access-control-allow-origin"]).toBe(origin);
+    }
+
+    await app.close();
+  });
+
+  it("answers OPTIONS preflight for protected routes without a token", async () => {
+    const runtime = mockRuntime();
+    const { app } = await createCompanionApp({
+      runtime,
+      logger: false,
+      localToken: "tok",
+    });
+
+    for (const url of ["/sessions", "/commands"] as const) {
+      const res = await app.inject({
+        method: "OPTIONS",
+        url,
+        headers: {
+          origin: "http://localhost:3000",
+          "access-control-request-method": "POST",
+          "access-control-request-headers": "x-webchain-token",
+        },
+      });
+      // Preflight must succeed so browser control-plane POSTs are not blocked.
+      expect(res.statusCode).toBeGreaterThanOrEqual(200);
+      expect(res.statusCode).toBeLessThan(400);
+      expect(res.headers["access-control-allow-origin"]).toBe(
+        "http://localhost:3000",
+      );
+    }
+
+    expect(runtime.createSession).not.toHaveBeenCalled();
+    await app.close();
+  });
+
   it("returns 400 on invalid command body", async () => {
     const { app } = await createCompanionApp({
       runtime: mockRuntime(),
