@@ -33,8 +33,18 @@ type SessionRecord = {
 export class BrowserRuntime {
   private browserPromise: Promise<Browser> | null = null;
   private sessions = new Map<string, SessionRecord>();
+  private shuttingDown = false;
 
   constructor(private readonly options: BrowserRuntimeOptions = {}) {}
+
+  private assertActive(operation: string) {
+    if (this.shuttingDown) {
+      throw new WebchainRuntimeError(
+        "COMMAND_FAILED",
+        `Runtime is shutting down; cannot ${operation}`,
+      );
+    }
+  }
 
   private async getBrowser(): Promise<Browser> {
     if (!this.browserPromise) {
@@ -70,6 +80,7 @@ export class BrowserRuntime {
   }
 
   async createSession(): Promise<RuntimeSession> {
+    this.assertActive("create session");
     const browser = await this.getBrowser();
     const context = await browser.newContext();
 
@@ -96,6 +107,7 @@ export class BrowserRuntime {
   }
 
   async navigate(command: NavigateCommand): Promise<ActionResult> {
+    this.assertActive("navigate");
     const session = this.getSession(command.sessionId);
     try {
       await session.page.goto(command.url, { waitUntil: "domcontentloaded" });
@@ -111,6 +123,7 @@ export class BrowserRuntime {
   }
 
   async snapshot(command: SnapshotCommand): Promise<SnapshotResult> {
+    this.assertActive("snapshot");
     const session = this.getSession(command.sessionId);
     try {
       const page = session.page;
@@ -164,6 +177,7 @@ export class BrowserRuntime {
   }
 
   async click(command: ClickCommand): Promise<ActionResult> {
+    this.assertActive("click");
     const session = this.getSession(command.sessionId);
     try {
       await session.page.locator(command.selector).first().click();
@@ -179,6 +193,7 @@ export class BrowserRuntime {
   }
 
   async type(command: TypeCommand): Promise<ActionResult> {
+    this.assertActive("type");
     const session = this.getSession(command.sessionId);
     try {
       await session.page.locator(command.selector).first().fill(command.text);
@@ -196,6 +211,7 @@ export class BrowserRuntime {
   async closeSession(
     command: CloseSessionCommand,
   ): Promise<CloseSessionResult> {
+    this.assertActive("close session");
     const session = this.getSession(command.sessionId);
     try {
       await session.context.close();
@@ -211,6 +227,11 @@ export class BrowserRuntime {
   }
 
   async shutdown() {
+    if (this.shuttingDown) {
+      return;
+    }
+    this.shuttingDown = true;
+
     await Promise.all(
       [...this.sessions.values()].map(async (session) => {
         await session.context.close();

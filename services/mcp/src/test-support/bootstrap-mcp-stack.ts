@@ -80,8 +80,8 @@ export async function bootstrapMcpStack(
     shutdown: async () => {
       await client.close();
       await stdioTransport.close();
-      await runtime.shutdown();
       await app.close();
+      await runtime.shutdown();
     },
   };
 }
