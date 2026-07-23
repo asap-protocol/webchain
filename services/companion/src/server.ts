@@ -161,8 +161,10 @@ export async function createCompanionApp(
 
   app.post("/sessions", async (_request, reply) => {
     const trace = createTraceContext();
+    let createdSessionId: string | undefined;
     try {
       const session = await options.runtime.createSession();
+      createdSessionId = session.sessionId;
       const parsedSession = SessionCreatedSchema.parse(session);
       return SessionCreatedResponseSchema.parse({
         ...parsedSession,
@@ -173,6 +175,14 @@ export async function createCompanionApp(
         ),
       });
     } catch (error) {
+      if (createdSessionId) {
+        await options.runtime
+          .closeSession({
+            action: "closeSession",
+            sessionId: createdSessionId,
+          })
+          .catch(() => {});
+      }
       return sendRuntimeFailure(reply, error, trace);
     }
   });

@@ -1,6 +1,8 @@
+import { SessionCreatedSchema } from "@webchain/protocol";
 import type { BrowserRuntime } from "@webchain/runtime";
 import { WebchainRuntimeError } from "@webchain/runtime";
 import { describe, expect, it, vi } from "vitest";
+import { z } from "zod";
 import { createCompanionApp } from "./server.js";
 
 function parseApiError(res: { body: string }) {
@@ -385,6 +387,41 @@ describe("createCompanionApp", () => {
     expect(body.lifecycle?.kind).toBe("command_error");
     expect(body.lifecycle?.sessionId).toBe("s1");
     expect(body.error).toContain("INVALID_TOOL_INPUT");
+    await app.close();
+  });
+
+  it("rolls back created session when response validation fails", async () => {
+    const runtime = mockRuntime({
+      createSession: vi.fn(async () => ({
+        sessionId: "sid-rollback",
+        pageId: "pid-1",
+        createdAt: new Date().toISOString(),
+      })),
+    });
+    const { app } = await createCompanionApp({
+      runtime,
+      logger: false,
+      localToken: "tok",
+    });
+
+    const parseSpy = vi
+      .spyOn(SessionCreatedSchema, "parse")
+      .mockImplementation(() => {
+        throw new z.ZodError([]);
+      });
+
+    const res = await app.inject({
+      method: "POST",
+      url: "/sessions",
+      headers: { "x-webchain-token": "tok" },
+    });
+
+    parseSpy.mockRestore();
+    expect(res.statusCode).toBe(400);
+    expect(runtime.closeSession).toHaveBeenCalledWith({
+      action: "closeSession",
+      sessionId: "sid-rollback",
+    });
     await app.close();
   });
 
