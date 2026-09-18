@@ -96,4 +96,65 @@ describe("local browser loop (integration)", () => {
     expect(errBody.code).toBe("SESSION_NOT_FOUND");
     expect(errBody.trace.traceId.length).toBeGreaterThan(0);
   });
+
+  it("fails snapshot quickly after renderer crash instead of hanging", async () => {
+    const crashRuntime = new BrowserRuntime({
+      headless: true,
+      pageCommandTimeoutMs: 3_000,
+    });
+    const { app: crashApp } = await createCompanionApp({
+      runtime: crashRuntime,
+      localToken: token,
+      logger: false,
+    });
+    try {
+      const sessionRes = await crashApp.inject({
+        method: "POST",
+        url: "/sessions",
+        headers: { "x-webchain-token": token },
+      });
+      expect(sessionRes.statusCode).toBe(200);
+      const { sessionId } = JSON.parse(sessionRes.body) as {
+        sessionId: string;
+      };
+
+      const nav = await crashApp.inject({
+        method: "POST",
+        url: "/commands",
+        headers: { "x-webchain-token": token },
+        payload: {
+          action: "navigate",
+          sessionId,
+          url: "chrome://crash",
+        },
+      });
+      expect(nav.statusCode).toBe(502);
+
+      const started = Date.now();
+      const snap = await crashApp.inject({
+        method: "POST",
+        url: "/commands",
+        headers: { "x-webchain-token": token },
+        payload: { action: "snapshot", sessionId },
+      });
+      const elapsed = Date.now() - started;
+      expect(snap.statusCode).toBe(502);
+      const body = JSON.parse(snap.body) as { code?: string; error?: string };
+      expect(body.code).toBe("COMMAND_FAILED");
+      expect(body.error ?? "").toMatch(/timed out|crashed/i);
+      // Must not hang for minutes; host timer is 3s plus small overhead.
+      expect(elapsed).toBeLessThan(8_000);
+
+      const close = await crashApp.inject({
+        method: "POST",
+        url: "/commands",
+        headers: { "x-webchain-token": token },
+        payload: { action: "closeSession", sessionId },
+      });
+      expect(close.statusCode).toBe(200);
+    } finally {
+      await crashRuntime.shutdown();
+      await crashApp.close();
+    }
+  });
 });
