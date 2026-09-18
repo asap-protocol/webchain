@@ -22,19 +22,33 @@ import { extractLandmarks, extractPageLinks } from "./snapshot-helpers.js";
 
 export interface BrowserRuntimeOptions {
   headless?: boolean;
+  /**
+   * Upper bound for CDP calls that can wedge after a renderer crash
+   * (Playwright's own timeouts do not always fire when the page process is dead).
+   */
+  pageCommandTimeoutMs?: number;
 }
 
 type SessionRecord = {
   context: BrowserContext;
   page: Page;
   pageId: string;
+  /** Set when Playwright emits `page` crash or a wedged CDP call times out. */
+  pageCrashed: boolean;
 };
+
+/** Default budget for snapshot CDP reads after which we fail instead of hanging. */
+export const DEFAULT_PAGE_COMMAND_TIMEOUT_MS = 15_000;
 
 export class BrowserRuntime {
   private browserPromise: Promise<Browser> | null = null;
   private sessions = new Map<string, SessionRecord>();
+  private readonly pageCommandTimeoutMs: number;
 
-  constructor(private readonly options: BrowserRuntimeOptions = {}) {}
+  constructor(private readonly options: BrowserRuntimeOptions = {}) {
+    this.pageCommandTimeoutMs =
+      options.pageCommandTimeoutMs ?? DEFAULT_PAGE_COMMAND_TIMEOUT_MS;
+  }
 
   private async getBrowser(): Promise<Browser> {
     if (!this.browserPromise) {
@@ -78,11 +92,16 @@ export class BrowserRuntime {
       const sessionId = randomUUID();
       const pageId = randomUUID();
 
-      this.sessions.set(sessionId, {
+      const record: SessionRecord = {
         context,
         page,
         pageId,
+        pageCrashed: false,
+      };
+      page.on("crash", () => {
+        record.pageCrashed = true;
       });
+      this.sessions.set(sessionId, record);
 
       return {
         sessionId,
@@ -97,9 +116,11 @@ export class BrowserRuntime {
 
   async navigate(command: NavigateCommand): Promise<ActionResult> {
     const session = this.getSession(command.sessionId);
+    this.assertPageUsable(session);
     try {
       await session.page.goto(command.url, { waitUntil: "domcontentloaded" });
     } catch (error) {
+      this.noteCrashFromError(session, error);
       throw mapCommandFailure(error);
     }
 
@@ -112,13 +133,22 @@ export class BrowserRuntime {
 
   async snapshot(command: SnapshotCommand): Promise<SnapshotResult> {
     const session = this.getSession(command.sessionId);
+    this.assertPageUsable(session);
     try {
       const page = session.page;
-      const html = await page.content();
+      /**
+       * After a renderer crash, Playwright's `page.content({ timeout })` may never
+       * settle (CDP wedged). Race with a host timer so companion/MCP callers fail.
+       */
+      const html = await this.awaitPageCommand(
+        session,
+        page.content(),
+        "page.content",
+      );
       /** Covers sync throws (some Playwright APIs throw before returning a Promise). */
       const safe = async <T>(run: () => Promise<T>): Promise<T | undefined> => {
         try {
-          return await run();
+          return await this.awaitPageCommand(session, run(), "snapshot-aux");
         } catch {
           return undefined;
         }
@@ -151,7 +181,7 @@ export class BrowserRuntime {
       return {
         sessionId: command.sessionId,
         url: page.url(),
-        title: await page.title(),
+        title: await this.awaitPageCommand(session, page.title(), "page.title"),
         htmlSnippet: summarizeHtml(html),
         domSummary,
         accessibilityTree: accessibilityJson,
@@ -159,15 +189,18 @@ export class BrowserRuntime {
         landmarks,
       };
     } catch (error) {
+      this.noteCrashFromError(session, error);
       throw mapCommandFailure(error);
     }
   }
 
   async click(command: ClickCommand): Promise<ActionResult> {
     const session = this.getSession(command.sessionId);
+    this.assertPageUsable(session);
     try {
       await session.page.locator(command.selector).first().click();
     } catch (error) {
+      this.noteCrashFromError(session, error);
       throw mapCommandFailure(error);
     }
 
@@ -180,9 +213,11 @@ export class BrowserRuntime {
 
   async type(command: TypeCommand): Promise<ActionResult> {
     const session = this.getSession(command.sessionId);
+    this.assertPageUsable(session);
     try {
       await session.page.locator(command.selector).first().fill(command.text);
     } catch (error) {
+      this.noteCrashFromError(session, error);
       throw mapCommandFailure(error);
     }
 
@@ -236,6 +271,60 @@ export class BrowserRuntime {
     }
 
     return session;
+  }
+
+  private assertPageUsable(session: SessionRecord): void {
+    if (session.pageCrashed) {
+      throw new WebchainRuntimeError(
+        "COMMAND_FAILED",
+        "Page crashed; close this session and create a new one.",
+      );
+    }
+  }
+
+  private noteCrashFromError(session: SessionRecord, error: unknown): void {
+    const message = error instanceof Error ? error.message : String(error);
+    if (
+      message.includes("Page crashed") ||
+      message.includes("Target crashed") ||
+      message.includes("page command timed out")
+    ) {
+      session.pageCrashed = true;
+    }
+  }
+
+  private awaitPageCommand<T>(
+    session: SessionRecord,
+    operation: Promise<T>,
+    label: string,
+  ): Promise<T> {
+    if (session.pageCrashed) {
+      return Promise.reject(
+        new WebchainRuntimeError(
+          "COMMAND_FAILED",
+          "Page crashed; close this session and create a new one.",
+        ),
+      );
+    }
+
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timeout = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => {
+        session.pageCrashed = true;
+        reject(
+          new WebchainRuntimeError(
+            "COMMAND_FAILED",
+            `Page command timed out after ${this.pageCommandTimeoutMs}ms (${label}); the page may have crashed.`,
+          ),
+        );
+      }, this.pageCommandTimeoutMs);
+    });
+
+    return Promise.race([operation, timeout]).finally(() => {
+      if (timer !== undefined) {
+        clearTimeout(timer);
+      }
+    });
   }
 }
 

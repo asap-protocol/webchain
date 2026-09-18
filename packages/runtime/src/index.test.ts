@@ -56,6 +56,7 @@ function createMockBrowserTree() {
     content: mockContent,
     evaluate: mockEvaluate,
     $$eval: mockEvalAnchors,
+    on: vi.fn(),
     locator: vi.fn(() => ({
       first: () => ({
         click: mockClick,
@@ -328,5 +329,64 @@ describe("BrowserRuntime", () => {
       code: "BROWSER_LAUNCH_FAILED",
       message: "other failure",
     });
+  });
+
+  it("times out wedged page.content during snapshot instead of hanging", async () => {
+    const { browser, page } = createMockBrowserTree();
+    page.content = vi.fn(() => new Promise(() => {}));
+    mockChromiumLaunch.mockResolvedValueOnce(browser);
+
+    const rt = new BrowserRuntime({
+      headless: true,
+      pageCommandTimeoutMs: 50,
+    });
+    try {
+      const { sessionId } = await rt.createSession();
+      await expect(
+        rt.snapshot({ action: "snapshot", sessionId }),
+      ).rejects.toMatchObject({
+        code: "COMMAND_FAILED",
+        message: expect.stringContaining("timed out"),
+      });
+      // Subsequent commands fail fast once the session is marked crashed.
+      await expect(
+        rt.snapshot({ action: "snapshot", sessionId }),
+      ).rejects.toMatchObject({
+        code: "COMMAND_FAILED",
+        message: expect.stringContaining("Page crashed"),
+      });
+    } finally {
+      await rt.shutdown();
+    }
+  });
+
+  it("marks the session crashed when Playwright emits page crash", async () => {
+    const { browser, page } = createMockBrowserTree();
+    const crashHandlers: Array<() => void> = [];
+    page.on = vi.fn((event: string, handler: () => void) => {
+      if (event === "crash") {
+        crashHandlers.push(handler);
+      }
+    });
+    mockChromiumLaunch.mockResolvedValueOnce(browser);
+
+    const rt = new BrowserRuntime({ headless: true });
+    try {
+      const { sessionId } = await rt.createSession();
+      expect(crashHandlers.length).toBe(1);
+      crashHandlers[0]?.();
+      await expect(
+        rt.navigate({
+          action: "navigate",
+          sessionId,
+          url: "https://example.com",
+        }),
+      ).rejects.toMatchObject({
+        code: "COMMAND_FAILED",
+        message: expect.stringContaining("Page crashed"),
+      });
+    } finally {
+      await rt.shutdown();
+    }
   });
 });
